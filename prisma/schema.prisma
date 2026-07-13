@@ -1,0 +1,58 @@
+// This is your Prisma schema file
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+
+model StudentFee {
+  id Int @id @default(autoincrement())
+
+  // Student Information
+  class       String
+  studentName String
+  fatherName  String
+
+  // Previous Year (Last Year) Fees
+  previousFees     Float @default(0)
+  previousDeposit  Float @default(0)
+  previousDiscount Float @default(0)
+  previousDue      Float @default(0)
+
+  // Current School Fees
+  schoolFees     Float @default(0)
+  schoolDeposit  Float @default(0)
+  schoolDiscount Float @default(0)
+  schoolDue      Float @default(0)
+
+  // Current Bus / Vehicle Fees
+  busFees     Float @default(0)
+  busDeposit  Float @default(0)
+  busDiscount Float @default(0)
+  busDue      Float @default(0)
+
+  // Extra / Miscellaneous Fees
+  extraFees     Float @default(0)
+  extraDeposit  Float @default(0)
+  extraDiscount Float @default(0)
+  extraDue      Float @default(0)
+
+  // Grand Totals
+  totalFees     Float @default(0)
+  totalDeposit  Float @default(0)
+  totalDiscount Float @default(0)
+  totalDue      Float @default(0)
+
+  // Metadata
+  academicYear String   @default("2024-25")
+  remarks      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
