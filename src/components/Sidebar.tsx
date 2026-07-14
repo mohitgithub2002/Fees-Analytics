@@ -1,98 +1,99 @@
 import Link from 'next/link'
 import {
-  GraduationCap,
   LayoutDashboard,
   BarChart3,
   Users,
   TrendingUp,
   Settings,
+  GraduationCap,
 } from 'lucide-react'
 
 const NAV = [
   { icon: LayoutDashboard, label: 'Dashboard', href: '/', active: true },
-  { icon: BarChart3,       label: 'Analytics',  href: '#' },
-  { icon: Users,           label: 'Students',   href: '#' },
-  { icon: TrendingUp,      label: 'Reports',    href: '#' },
-  { icon: Settings,        label: 'Settings',   href: '#' },
+  { icon: BarChart3,       label: 'Analytics', href: '#' },
+  { icon: Users,           label: 'Students',  href: '#' },
+  { icon: TrendingUp,      label: 'Reports',   href: '#' },
+  { icon: Settings,        label: 'Settings',  href: '#' },
 ]
 
 export function Sidebar() {
   return (
     <aside
-      className="w-64 h-full flex flex-col flex-shrink-0"
-      style={{
-        background: 'rgba(255,255,255,0.02)',
-        borderRight: '1px solid var(--border)',
-      }}
+      className="w-[248px] h-full flex flex-col flex-shrink-0"
+      style={{ background: 'var(--surface)', borderRight: '1px solid var(--border)' }}
     >
-      {/* Logo -------------------------------------------------- */}
+      {/* ── Brand ─────────────────────────────────────────── */}
       <div
-        className="px-5 py-5 flex items-center gap-3"
+        className="px-4 h-16 flex items-center gap-3 flex-shrink-0"
         style={{ borderBottom: '1px solid var(--border)' }}
       >
         <div
-          className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-          style={{
-            background: 'linear-gradient(135deg, var(--indigo), var(--purple))',
-          }}
+          className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+          style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
         >
-          <GraduationCap className="w-5 h-5 text-white" />
+          <GraduationCap className="w-[18px] h-[18px]" />
         </div>
-        <div className="overflow-hidden">
-          <p
-            className="font-bold text-sm leading-tight truncate"
-            style={{ color: 'var(--text-primary)' }}
-          >
+        <div className="overflow-hidden leading-tight">
+          <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
             VPS School
           </p>
-          <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
-            Fees Dashboard
+          <p className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+            Fees Recovery
           </p>
         </div>
       </div>
 
-      {/* Nav --------------------------------------------------- */}
-      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {NAV.map((item) => (
-          <Link
-            key={item.label}
-            href={item.href}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group"
-            style={
-              item.active
-                ? {
-                    background:
-                      'linear-gradient(135deg, rgba(99,102,241,0.25), rgba(168,85,247,0.18))',
-                    color: 'var(--indigo)',
-                    border: '1px solid rgba(99,102,241,0.30)',
-                  }
-                : {
-                    color: 'var(--text-secondary)',
-                    border: '1px solid transparent',
-                  }
-            }
-          >
-            <item.icon
-              className="w-4 h-4 flex-shrink-0"
-              style={item.active ? { color: 'var(--indigo)' } : {}}
-            />
-            <span>{item.label}</span>
-          </Link>
-        ))}
+      {/* ── Navigation ────────────────────────────────────── */}
+      <nav className="flex-1 px-3 pt-4 overflow-y-auto">
+        <p className="label-micro px-2 mb-2">Menu</p>
+        <div className="space-y-0.5">
+          {NAV.map((item) => (
+            <Link
+              key={item.label}
+              href={item.href}
+              className="group relative flex items-center gap-3 px-2.5 h-9 rounded-lg text-[13px] font-medium transition-colors duration-150"
+              style={
+                item.active
+                  ? { background: 'var(--accent-soft)', color: 'var(--text-primary)' }
+                  : { color: 'var(--text-secondary)' }
+              }
+            >
+              {item.active && (
+                <span
+                  className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-full"
+                  style={{ background: 'var(--accent)' }}
+                />
+              )}
+              <item.icon
+                className="w-[17px] h-[17px] flex-shrink-0 transition-colors"
+                style={{ color: item.active ? 'var(--text-primary)' : 'var(--text-muted)' }}
+              />
+              <span>{item.label}</span>
+            </Link>
+          ))}
+        </div>
       </nav>
 
-      {/* Footer ------------------------------------------------ */}
-      <div className="p-3" style={{ borderTop: '1px solid var(--border)' }}>
+      {/* ── Footer ────────────────────────────────────────── */}
+      <div className="p-3 flex-shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
         <div
-          className="px-3 py-3 rounded-xl"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)' }}
+          className="flex items-center gap-3 px-2.5 py-2.5 rounded-lg"
+          style={{ background: 'var(--card)', border: '1px solid var(--border)' }}
         >
-          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-            Academic Year
-          </p>
-          <p className="text-sm font-bold mt-0.5" style={{ color: 'var(--text-primary)' }}>
-            2024–25
-          </p>
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-semibold flex-shrink-0"
+            style={{ background: 'var(--elevated-2)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+          >
+            AY
+          </div>
+          <div className="leading-tight overflow-hidden">
+            <p className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+              Academic Year
+            </p>
+            <p className="text-[11px] mono truncate" style={{ color: 'var(--text-muted)' }}>
+              2024–25
+            </p>
+          </div>
         </div>
       </div>
     </aside>

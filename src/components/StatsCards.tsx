@@ -1,4 +1,7 @@
-import { Users, IndianRupee, TrendingUp, AlertCircle, Percent, Clock, School, Bus } from 'lucide-react'
+import {
+  Users, IndianRupee, TrendingUp, AlertCircle,
+  Percent, Clock, School, Bus, ArrowUpRight, ArrowDownRight,
+} from 'lucide-react'
 import type { AnalyticsOverview } from '@/lib/types'
 
 interface StatsCardsProps {
@@ -12,108 +15,126 @@ function fmtCur(n: number) {
   return `₹${n.toLocaleString('en-IN')}`
 }
 
-const CARDS = (a: AnalyticsOverview) => [
-  {
-    label:    'Total Students',
-    value:    a.totalStudents.toString(),
-    icon:     Users,
-    gradient: 'linear-gradient(135deg,#3b82f6,#6366f1)',
-    glow:     'rgba(99,102,241,0.18)',
-    desc:     'Enrolled this year',
-  },
-  {
-    label:    'Total Fees',
-    value:    fmtCur(a.totalFees),
-    icon:     IndianRupee,
-    gradient: 'linear-gradient(135deg,#6366f1,#a855f7)',
-    glow:     'rgba(168,85,247,0.18)',
-    desc:     'Expected this term',
-  },
-  {
-    label:    'Fees Collected',
-    value:    fmtCur(a.totalDeposit),
-    icon:     TrendingUp,
-    gradient: 'linear-gradient(135deg,#10b981,#059669)',
-    glow:     'rgba(16,185,129,0.18)',
-    desc:     'Successfully recovered',
-  },
-  {
-    label:    'Total Pending',
-    value:    fmtCur(a.totalDue),
-    icon:     AlertCircle,
-    gradient: 'linear-gradient(135deg,#f43f5e,#e11d48)',
-    glow:     'rgba(244,63,94,0.20)',
-    desc:     'Outstanding dues',
-  },
-  {
-    label:    'Recovery Rate',
-    value:    `${a.recoveryRate}%`,
-    icon:     Percent,
-    gradient: 'linear-gradient(135deg,#f59e0b,#d97706)',
-    glow:     'rgba(245,158,11,0.18)',
-    desc:     'Fees collected ratio',
-  },
-  {
-    label:    'Prev. Year Due',
-    value:    fmtCur(a.previousDue),
-    icon:     Clock,
-    gradient: 'linear-gradient(135deg,#ec4899,#db2777)',
-    glow:     'rgba(236,72,153,0.18)',
-    desc:     'Carried from last year',
-  },
-  {
-    label:    'School Fees Due',
-    value:    fmtCur(a.schoolDue),
-    icon:     School,
-    gradient: 'linear-gradient(135deg,#3b82f6,#2563eb)',
-    glow:     'rgba(59,130,246,0.18)',
-    desc:     'Current tuition pending',
-  },
-  {
-    label:    'Bus Fees Due',
-    value:    fmtCur(a.busDue),
-    icon:     Bus,
-    gradient: 'linear-gradient(135deg,#14b8a6,#0891b2)',
-    glow:     'rgba(20,184,166,0.18)',
-    desc:     'Transport pending',
-  },
+type Tone = 'neutral' | 'good' | 'critical' | 'accent' | 'warning'
+
+const toneColor: Record<Tone, string> = {
+  neutral:  'var(--text-primary)',
+  good:     'var(--good-2)',
+  critical: 'var(--critical)',
+  accent:   'var(--data-2)',
+  warning:  'var(--warning)',
+}
+
+const CARDS = (a: AnalyticsOverview) => {
+  const recovery = parseFloat(a.recoveryRate)
+  return [
+    {
+      label: 'Total Students', value: a.totalStudents.toLocaleString('en-IN'),
+      icon: Users, tone: 'neutral' as Tone, desc: 'Enrolled this year',
+      trend: null,
+    },
+    {
+      label: 'Total Fees', value: fmtCur(a.totalFees),
+      icon: IndianRupee, tone: 'neutral' as Tone, desc: 'Expected this term',
+      trend: null,
+    },
+    {
+      label: 'Fees Collected', value: fmtCur(a.totalDeposit),
+      icon: TrendingUp, tone: 'good' as Tone, desc: 'Successfully recovered',
+      trend: { dir: 'up' as const, text: `${recovery}%` },
+    },
+    {
+      label: 'Total Pending', value: fmtCur(a.totalDue),
+      icon: AlertCircle, tone: 'critical' as Tone, desc: 'Outstanding dues',
+      trend: { dir: 'down' as const, text: `${(100 - recovery).toFixed(1)}%` },
+    },
+  ]
+}
+
+const SECONDARY = (a: AnalyticsOverview) => [
+  { label: 'Recovery Rate',   value: `${a.recoveryRate}%`,   icon: Percent, tone: 'accent'   as Tone },
+  { label: 'Prev. Year Due',  value: fmtCur(a.previousDue),  icon: Clock,   tone: 'warning'  as Tone },
+  { label: 'School Fees Due', value: fmtCur(a.schoolDue),    icon: School,  tone: 'neutral'  as Tone },
+  { label: 'Bus Fees Due',    value: fmtCur(a.busDue),       icon: Bus,     tone: 'neutral'  as Tone },
 ]
 
-export function StatsCards({ analytics }: StatsCardsProps) {
-  const cards = CARDS(analytics)
+function IconBox({ icon: Icon }: { icon: React.ElementType }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-fadein">
-      {cards.map((card, i) => (
-        <div
-          key={i}
-          className="glass-card p-5 relative overflow-hidden group cursor-default"
-          style={{ animationDelay: `${i * 40}ms` }}
-        >
-          {/* Hover glow */}
+    <div
+      className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+      style={{ background: 'var(--elevated)', border: '1px solid var(--border)' }}
+    >
+      <Icon className="w-[17px] h-[17px]" style={{ color: 'var(--text-secondary)' }} />
+    </div>
+  )
+}
+
+export function StatsCards({ analytics }: StatsCardsProps) {
+  const primary = CARDS(analytics)
+  const secondary = SECONDARY(analytics)
+
+  return (
+    <div className="space-y-4">
+      {/* ── Primary KPIs ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {primary.map((c, i) => (
           <div
-            className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-            style={{ background: card.glow }}
-          />
-          {/* Content */}
-          <div className="relative z-10">
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center mb-3"
-              style={{ background: card.gradient }}
-            >
-              <card.icon className="w-5 h-5 text-white" />
+            key={c.label}
+            className="card card-hover p-5 animate-fadeup"
+            style={{ animationDelay: `${i * 45}ms` }}
+          >
+            <div className="flex items-start justify-between mb-4">
+              <IconBox icon={c.icon} />
+              {c.trend && (
+                <span
+                  className="flex items-center gap-1 text-[12px] font-medium mono px-2 h-6 rounded-full"
+                  style={{
+                    background: c.trend.dir === 'up' ? 'var(--good-soft)' : 'var(--critical-soft)',
+                    color: c.trend.dir === 'up' ? 'var(--good-2)' : 'var(--critical)',
+                  }}
+                >
+                  {c.trend.dir === 'up'
+                    ? <ArrowUpRight className="w-3.5 h-3.5" />
+                    : <ArrowDownRight className="w-3.5 h-3.5" />}
+                  {c.trend.text}
+                </span>
+              )}
             </div>
-            <p className="text-xs font-medium mb-0.5" style={{ color: 'var(--text-secondary)' }}>
-              {card.label}
+            <p className="label-micro mb-1.5">{c.label}</p>
+            <p
+              className="mono text-[26px] font-semibold tracking-tight leading-none"
+              style={{ color: toneColor[c.tone] }}
+            >
+              {c.value}
             </p>
-            <p className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-              {card.value}
-            </p>
-            <p className="text-xs mt-1 truncate" style={{ color: 'var(--text-muted)' }}>
-              {card.desc}
+            <p className="text-[12px] mt-2" style={{ color: 'var(--text-muted)' }}>
+              {c.desc}
             </p>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
+
+      {/* ── Secondary metrics strip ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {secondary.map((c, i) => (
+          <div
+            key={c.label}
+            className="card card-hover px-4 py-3.5 flex items-center gap-3.5 animate-fadeup"
+            style={{ animationDelay: `${(i + 4) * 45}ms` }}
+          >
+            <IconBox icon={c.icon} />
+            <div className="min-w-0">
+              <p className="label-micro mb-1 truncate">{c.label}</p>
+              <p
+                className="mono text-[17px] font-semibold tracking-tight leading-none truncate"
+                style={{ color: toneColor[c.tone] }}
+              >
+                {c.value}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
