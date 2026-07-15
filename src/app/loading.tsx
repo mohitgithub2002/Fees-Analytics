@@ -1,18 +1,16 @@
 export default function Loading() {
   return (
-    <div
-      className="flex h-screen items-center justify-center"
-      style={{ background: 'var(--bg-primary)' }}
-    >
+    <div className="app-canvas flex h-screen w-full items-center justify-center">
       <div className="flex flex-col items-center gap-4">
         <div
-          className="w-11 h-11 rounded-full border-2 animate-spin"
+          className="w-9 h-9 rounded-full border-2"
           style={{
-            borderColor: 'rgba(99,102,241,0.3)',
-            borderTopColor: 'var(--indigo)',
+            borderColor: 'var(--border-strong)',
+            borderTopColor: 'var(--text-primary)',
+            animation: 'spin .7s linear infinite',
           }}
         />
-        <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+        <p className="text-[13px] font-medium mono" style={{ color: 'var(--text-muted)' }}>
           Loading dashboard…
         </p>
       </div>

@@ -95,46 +95,52 @@ export default async function DashboardPage() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* ── Header ─────────────────────────────── */}
         <header
-          className="px-8 py-4 flex items-center justify-between flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--border)' }}
+          className="px-8 h-16 flex items-center justify-between flex-shrink-0"
+          style={{ borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}
         >
-          <div>
-            <h1 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-              Fees Recovery Dashboard
-            </h1>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-              Academic Year 2024-25 &bull; {analytics.overview.totalStudents} students enrolled
+          <div className="leading-tight">
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                Fees Recovery
+              </h1>
+              <span className="text-[13px]" style={{ color: 'var(--text-faint)' }}>/</span>
+              <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>Overview</span>
+            </div>
+            <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              <span className="mono">{analytics.overview.totalStudents}</span> students · Academic Year 2024–25
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             {/* Live badge */}
             <div
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-              style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}
+              className="flex items-center gap-2 px-2.5 h-7 rounded-full text-[12px] font-medium"
+              style={{ background: 'var(--good-soft)', color: 'var(--good-2)' }}
             >
               <span
                 className="w-1.5 h-1.5 rounded-full"
-                style={{ background: '#10b981', animation: 'pulse-glow 2s infinite' }}
+                style={{ background: 'var(--good-2)', animation: 'livePulse 2.4s ease-in-out infinite' }}
               />
               Live
             </div>
 
             {/* Date */}
-            <p className="text-xs hidden sm:block" style={{ color: 'var(--text-secondary)' }}>
+            <p className="text-[12px] mono hidden sm:block" style={{ color: 'var(--text-muted)' }}>
               {new Date().toLocaleDateString('en-IN', {
-                day: 'numeric', month: 'long', year: 'numeric',
+                day: 'numeric', month: 'short', year: 'numeric',
               })}
             </p>
           </div>
         </header>
 
         {/* ── Main content ────────────────────────── */}
-        <main className="flex-1 overflow-y-auto px-8 py-6">
-          <DashboardClient
-            initialAnalytics={analytics}
-            initialStudents={students}
-          />
+        <main className="flex-1 overflow-y-auto px-8 py-7">
+          <div className="mx-auto max-w-[1400px]">
+            <DashboardClient
+              initialAnalytics={analytics}
+              initialStudents={students}
+            />
+          </div>
         </main>
       </div>
     </div>
