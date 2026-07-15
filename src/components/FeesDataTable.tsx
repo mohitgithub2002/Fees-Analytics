@@ -1,17 +1,19 @@
 'use client'
 
-import { useState } from 'react'
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Download } from 'lucide-react'
 import type { StudentFee, PaginationInfo } from '@/lib/types'
+
+type SortDir = 'asc' | 'desc'
 
 interface Props {
   data:         StudentFee[]
   pagination:   PaginationInfo
   onPageChange: (page: number) => void
+  sortKey:      string
+  sortDir:      SortDir
+  onSortChange: (key: string) => void
   isLoading?:   boolean
 }
-
-type SortDir = 'asc' | 'desc'
 
 const COLUMNS = [
   { key: 'class',       label: 'Class',        sortable: true,  align: 'left'  },
@@ -69,21 +71,11 @@ function SkeletonRow() {
   )
 }
 
-export function FeesDataTable({ data, pagination, onPageChange, isLoading }: Props) {
-  const [sortKey, setSortKey] = useState<string>('totalDue')
-  const [sortDir, setSortDir] = useState<SortDir>('desc')
-
-  const handleSort = (key: string) => {
-    if (key === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    else { setSortKey(key); setSortDir('desc') }
-  }
-
-  const sorted = [...data].sort((a, b) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const av = (a as any)[sortKey], bv = (b as any)[sortKey]
-    if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
-    return sortDir === 'asc' ? av - bv : bv - av
-  })
+export function FeesDataTable({
+  data, pagination, onPageChange, sortKey, sortDir, onSortChange, isLoading,
+}: Props) {
+  // Rows arrive already sorted server-side across the full dataset — render as-is.
+  const rows = data
 
   const SortIcon = ({ col }: { col: string }) =>
     sortKey === col
@@ -134,7 +126,7 @@ export function FeesDataTable({ data, pagination, onPageChange, isLoading }: Pro
                 <th
                   key={col.key}
                   id={`th-${col.key}`}
-                  onClick={() => col.sortable && handleSort(col.key)}
+                  onClick={() => col.sortable && onSortChange(col.key)}
                   className="px-4 py-3 text-[11px] font-medium whitespace-nowrap select-none"
                   style={{
                     color: sortKey === col.key ? 'var(--text-primary)' : 'var(--text-muted)',
@@ -152,8 +144,8 @@ export function FeesDataTable({ data, pagination, onPageChange, isLoading }: Pro
           </thead>
           <tbody>
             {isLoading ? (
-              Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)
-            ) : sorted.length === 0 ? (
+              Array.from({ length: 10 }).map((_, i) => <SkeletonRow key={i} />)
+            ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={COLUMNS.length} className="px-4 py-20 text-center text-[13px]"
                     style={{ color: 'var(--text-muted)' }}>
@@ -161,7 +153,7 @@ export function FeesDataTable({ data, pagination, onPageChange, isLoading }: Pro
                 </td>
               </tr>
             ) : (
-              sorted.map((row) => (
+              rows.map((row) => (
                 <tr
                   key={row.id}
                   className="transition-colors"
