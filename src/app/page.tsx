@@ -3,6 +3,12 @@ import { DashboardClient } from '@/components/DashboardClient'
 import { prisma }          from '@/lib/prisma'
 import type { Analytics, StudentsResponse } from '@/lib/types'
 
+// Live, data-backed dashboard — render per request instead of prerendering at
+// build time (prerendering would try to reach the database during `next build`).
+export const dynamic = 'force-dynamic'
+
+const PAGE_SIZE = 50
+
 const CLASS_ORDER = [
   'Nursery','LKG','UKG','I','II','III','IV','V','VI','VII','VIII','IX','X',
 ]
@@ -31,7 +37,7 @@ async function getInitialData(): Promise<{
       _count: { id: true },
     }),
     prisma.studentFee.findMany({
-      take: 20,
+      take: PAGE_SIZE,
       orderBy: [{ totalDue: 'desc' }, { studentName: 'asc' }],
       select: {
         id: true, class: true, studentName: true, fatherName: true,
@@ -77,9 +83,9 @@ async function getInitialData(): Promise<{
       data: studentRows as any,
       pagination: {
         page:  1,
-        limit: 20,
+        limit: PAGE_SIZE,
         total,
-        pages: Math.max(1, Math.ceil(total / 20)),
+        pages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
       },
     },
   }

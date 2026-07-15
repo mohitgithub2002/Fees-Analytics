@@ -9,7 +9,15 @@ export async function GET(request: NextRequest) {
   const search = sp.get('search')
   const feeType = sp.get('feeType') || 'total'
   const page = Math.max(1, parseInt(sp.get('page') || '1'))
-  const limit = Math.min(100, Math.max(5, parseInt(sp.get('limit') || '20')))
+  const limit = Math.min(100, Math.max(5, parseInt(sp.get('limit') || '50')))
+
+  // Whitelisted sort fields (guards against arbitrary orderBy injection)
+  const SORTABLE = new Set([
+    'class', 'studentName', 'previousDue', 'schoolDue',
+    'busDue', 'extraDue', 'totalDue',
+  ])
+  const sortKey = SORTABLE.has(sp.get('sortKey') || '') ? sp.get('sortKey')! : 'totalDue'
+  const sortDir = sp.get('sortDir') === 'asc' ? 'asc' : 'desc'
 
   // Build where clause
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,7 +56,11 @@ export async function GET(request: NextRequest) {
       where,
       skip: (page - 1) * limit,
       take: limit,
-      orderBy: [{ totalDue: 'desc' }, { studentName: 'asc' }],
+      // Sort across the ENTIRE filtered dataset, not just the current page.
+      // A stable secondary key keeps ordering deterministic across pages.
+      orderBy: sortKey === 'studentName'
+        ? [{ studentName: sortDir }]
+        : [{ [sortKey]: sortDir }, { studentName: 'asc' }],
       select: {
         id: true,
         class: true,
