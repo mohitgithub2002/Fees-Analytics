@@ -12,6 +12,7 @@
     "db:push": "prisma db push",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:load-csv": "npx tsx prisma/load-csv.ts",
+    "db:migrate-v2": "npx tsx prisma/migrate-v2.ts",
     "db:studio": "prisma studio"
   },
   "prisma": {

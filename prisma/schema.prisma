@@ -56,3 +56,268 @@ model StudentFee {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
+
+// ============================================================================
+// V2 SCHEMA — normalized fees management (School ERP foundation)
+// The legacy StudentFee model above is kept as-is; everything below is new.
+// ============================================================================
+
+enum FeeCategory {
+  SCHOOL
+  BUS
+  OTHER
+}
+
+enum InstallmentStatus {
+  PENDING
+  PARTIAL
+  PAID
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  PROMOTED
+  COMPLETED
+  TRANSFERRED
+  DROPPED
+}
+
+enum PaymentMode {
+  CASH
+  ONLINE
+  CHEQUE
+  BANK_TRANSFER
+  CARD
+  OTHER
+}
+
+enum TransactionStatus {
+  COMPLETED
+  CANCELLED
+}
+
+// An academic session/year, e.g. "2024-25". Exactly one should be current.
+model AcademicSession {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  startDate DateTime
+  endDate   DateTime
+  isCurrent Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  classrooms    Classroom[]
+  enrollments   StudentEnrollment[]
+  feeStructures FeeStructure[]
+}
+
+// Class master (session-independent), e.g. "LKG", "I", "X".
+model SchoolClass {
+  id           Int      @id @default(autoincrement())
+  name         String   @unique
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  classrooms    Classroom[]
+  feeStructures FeeStructure[]
+}
+
+// A class running in a specific session (optionally split into sections).
+// Student enrollments point here, giving every enrollment a session + class.
+model Classroom {
+  id        Int      @id @default(autoincrement())
+  classId   Int
+  sessionId Int
+  section   String   @default("A")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  class       SchoolClass         @relation(fields: [classId], references: [id])
+  session     AcademicSession     @relation(fields: [sessionId], references: [id])
+  enrollments StudentEnrollment[]
+
+  @@unique([classId, sessionId, section])
+  @@index([sessionId])
+}
+
+// Student master data — one row per person, across all sessions.
+model Student {
+  id                 Int       @id @default(autoincrement())
+  admissionNo        String?   @unique
+  name               String
+  fatherName         String
+  motherName         String?
+  phone              String?
+  address            String?
+  gender             String?
+  dateOfBirth        DateTime?
+  isActive           Boolean   @default(true)
+  remarks            String?
+  // Link back to the legacy StudentFee row this student was migrated from.
+  legacyStudentFeeId Int?      @unique
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  enrollments  StudentEnrollment[]
+  transactions FeeTransaction[]
+
+  @@index([name])
+}
+
+// A student's membership in a classroom for one session.
+// All fees hang off the enrollment, so dues are tracked per session.
+model StudentEnrollment {
+  id          Int              @id @default(autoincrement())
+  studentId   Int
+  sessionId   Int
+  classroomId Int
+  rollNo      Int?
+  status      EnrollmentStatus @default(ACTIVE)
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  student   Student         @relation(fields: [studentId], references: [id])
+  session   AcademicSession @relation(fields: [sessionId], references: [id])
+  classroom Classroom       @relation(fields: [classroomId], references: [id])
+  feeItems  StudentFeeItem[]
+
+  @@unique([studentId, sessionId])
+  @@index([classroomId])
+  @@index([sessionId])
+}
+
+// Class-wise fee template for a session. Assigning it to a student copies
+// its items into StudentFeeItem rows, which the admin can then edit freely.
+model FeeStructure {
+  id        Int      @id @default(autoincrement())
+  sessionId Int
+  classId   Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session AcademicSession    @relation(fields: [sessionId], references: [id])
+  class   SchoolClass        @relation(fields: [classId], references: [id])
+  items   FeeStructureItem[]
+
+  @@unique([sessionId, classId])
+}
+
+model FeeStructureItem {
+  id               Int         @id @default(autoincrement())
+  feeStructureId   Int
+  category         FeeCategory
+  name             String
+  amount           Decimal     @db.Decimal(12, 2)
+  installmentCount Int         @default(1)
+
+  feeStructure FeeStructure     @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
+  feeItems     StudentFeeItem[]
+
+  @@unique([feeStructureId, name])
+}
+
+// A fee assigned to one enrollment (e.g. "School Fees 2024-25" for one
+// student). Aggregates are kept in sync with the installments beneath it:
+//   netAmount = originalAmount - discountAmount
+//   dueAmount = netAmount - paidAmount
+model StudentFeeItem {
+  id              Int         @id @default(autoincrement())
+  enrollmentId    Int
+  structureItemId Int?
+  category        FeeCategory
+  name            String
+  originalAmount  Decimal     @db.Decimal(12, 2)
+  discountAmount  Decimal     @default(0) @db.Decimal(12, 2)
+  netAmount       Decimal     @db.Decimal(12, 2)
+  paidAmount      Decimal     @default(0) @db.Decimal(12, 2)
+  dueAmount       Decimal     @db.Decimal(12, 2)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  enrollment    StudentEnrollment @relation(fields: [enrollmentId], references: [id])
+  structureItem FeeStructureItem? @relation(fields: [structureItemId], references: [id], onDelete: SetNull)
+  installments  FeeInstallment[]
+  discounts     FeeDiscount[]
+
+  @@index([enrollmentId])
+  @@index([category])
+}
+
+// One installment of a fee item. Payments are allocated at this level.
+// Same invariants as the fee item: netAmount = originalAmount - discountAmount.
+model FeeInstallment {
+  id             Int               @id @default(autoincrement())
+  feeItemId      Int
+  sequence       Int
+  label          String
+  dueDate        DateTime?
+  originalAmount Decimal           @db.Decimal(12, 2)
+  discountAmount Decimal           @default(0) @db.Decimal(12, 2)
+  netAmount      Decimal           @db.Decimal(12, 2)
+  paidAmount     Decimal           @default(0) @db.Decimal(12, 2)
+  status         InstallmentStatus @default(PENDING)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  feeItem     StudentFeeItem          @relation(fields: [feeItemId], references: [id], onDelete: Cascade)
+  allocations TransactionAllocation[]
+
+  @@unique([feeItemId, sequence])
+  @@index([status])
+}
+
+// Audit trail of discounts applied to a fee item. Applying a discount only
+// reduces UNPAID installment amounts — paid installments are never touched.
+model FeeDiscount {
+  id        Int      @id @default(autoincrement())
+  feeItemId Int
+  amount    Decimal  @db.Decimal(12, 2)
+  reason    String?
+  appliedBy String?
+  createdAt DateTime @default(now())
+
+  feeItem StudentFeeItem @relation(fields: [feeItemId], references: [id], onDelete: Cascade)
+}
+
+// A payment made by/for a student. `category` records which fee type the
+// payment was for; the allocation engine distributes it into installments
+// (past-session dues first, see src/lib/fees/allocation.ts).
+model FeeTransaction {
+  id        Int               @id @default(autoincrement())
+  receiptNo String            @unique
+  studentId Int
+  category  FeeCategory?
+  amount    Decimal           @db.Decimal(12, 2)
+  mode      PaymentMode       @default(CASH)
+  reference String?
+  remarks   String?
+  status    TransactionStatus @default(COMPLETED)
+  paidAt    DateTime          @default(now())
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  student     Student                 @relation(fields: [studentId], references: [id])
+  allocations TransactionAllocation[]
+
+  @@index([studentId])
+  @@index([paidAt])
+}
+
+// How a transaction's amount was split across installments.
+// sum(allocations.amount) = transaction.amount for COMPLETED transactions.
+model TransactionAllocation {
+  id            Int      @id @default(autoincrement())
+  transactionId Int
+  installmentId Int
+  amount        Decimal  @db.Decimal(12, 2)
+  createdAt     DateTime @default(now())
+
+  transaction FeeTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  installment FeeInstallment @relation(fields: [installmentId], references: [id])
+
+  @@index([transactionId])
+  @@index([installmentId])
+}
