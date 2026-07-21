@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, ok, parseId } from '@/lib/fees/api'
+import { cached, TAGS } from '@/lib/cache'
 import { Prisma } from '@/generated/prisma/client'
 
 /**
@@ -23,6 +24,17 @@ export async function GET(request: NextRequest) {
   const session = await prisma.academicSession.findUnique({ where: { id: sessionId } })
   if (!session) return err('session not found', 404)
 
+  // Cached per session; invalidated by the `fees` tag on any money movement.
+  const payload = await cached(
+    `analytics:${sessionId}`,
+    { tags: [TAGS.fees], ttlMs: 60_000 },
+    () => computeAnalytics(session),
+  )
+  return ok(payload)
+}
+
+async function computeAnalytics(session: { id: number; name: string; isCurrent: boolean; startDate: Date }) {
+  const sessionId = session.id
   const [overview, byCategory, byClass, carriedForward] = await Promise.all([
     prisma.studentFeeItem.aggregate({
       where: { enrollment: { sessionId } },
@@ -84,7 +96,7 @@ export async function GET(request: NextRequest) {
   const net = Number(overview._sum.netAmount ?? 0)
   const paid = Number(overview._sum.paidAmount ?? 0)
 
-  return ok({
+  return {
     session: { id: session.id, name: session.name, isCurrent: session.isCurrent },
     overview: {
       totalStudents: students,
@@ -98,5 +110,5 @@ export async function GET(request: NextRequest) {
     byCategory,
     byClass,
     carriedForwardDues: carriedForward[0] ?? { students: 0, dueAmount: 0 },
-  })
+  }
 }

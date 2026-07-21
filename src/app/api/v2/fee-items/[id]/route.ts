@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, isPositiveAmount, ok, parseId, readJson } from '@/lib/fees/api'
+import { invalidateTags, TAGS } from '@/lib/cache'
 import { changeFeeItemAmount, deleteFeeItem } from '@/lib/fees/fee-items'
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -52,6 +53,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         include: { installments: { orderBy: { sequence: 'asc' } } },
       })
     })
+    invalidateTags(TAGS.fees)
     return ok(feeItem)
   } catch (e) {
     return handleError(e)
@@ -64,6 +66,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
 
   try {
     await prisma.$transaction((tx) => deleteFeeItem(tx, id))
+    invalidateTags(TAGS.fees)
     return ok({ deleted: true })
   } catch (e) {
     return handleError(e)

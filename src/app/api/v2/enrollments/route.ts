@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, ok, parseId, readJson } from '@/lib/fees/api'
+import { invalidateTags, TAGS } from '@/lib/cache'
 import { applyStructureToEnrollment, FeeItemError } from '@/lib/fees/fee-items'
 
 export async function GET(request: NextRequest) {
@@ -87,6 +88,9 @@ export async function POST(request: NextRequest) {
         },
       })
     })
+    // New enrollment adds a student to a session + creates dues, and bumps
+    // classroom/session enrollment counts.
+    invalidateTags(TAGS.fees, TAGS.classrooms, TAGS.sessions)
     return ok(enrollment, 201)
   } catch (e) {
     return handleError(e)

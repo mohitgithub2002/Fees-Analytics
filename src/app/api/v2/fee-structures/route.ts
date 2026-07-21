@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, isPositiveAmount, ok, parseId, readJson } from '@/lib/fees/api'
+import { cached, invalidateTags, TAGS } from '@/lib/cache'
 import { $Enums } from '@/generated/prisma/client'
 
 const CATEGORIES = new Set(Object.values($Enums.FeeCategory))
@@ -40,16 +41,21 @@ export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams
   const sessionId = sp.get('sessionId') ? parseId(sp.get('sessionId')!) : null
 
-  const structures = await prisma.feeStructure.findMany({
-    where: sessionId ? { sessionId } : {},
-    include: {
-      class: true,
-      session: { select: { id: true, name: true, isCurrent: true } },
-      items: { orderBy: { id: 'asc' } },
-    },
-    orderBy: [{ sessionId: 'desc' }, { class: { displayOrder: 'asc' } }],
-  })
-  return ok({ data: structures })
+  const data = await cached(
+    `structures:${sessionId ?? ''}`,
+    { tags: [TAGS.structures], ttlMs: 120_000 },
+    () =>
+      prisma.feeStructure.findMany({
+        where: sessionId ? { sessionId } : {},
+        include: {
+          class: true,
+          session: { select: { id: true, name: true, isCurrent: true } },
+          items: { orderBy: { id: 'asc' } },
+        },
+        orderBy: [{ sessionId: 'desc' }, { class: { displayOrder: 'asc' } }],
+      }),
+  )
+  return ok({ data })
 }
 
 /**
@@ -94,6 +100,7 @@ export async function POST(request: NextRequest) {
         include: { class: true, session: { select: { id: true, name: true } }, items: true },
       })
     })
+    invalidateTags(TAGS.structures, TAGS.classes)
     return ok(structure, 201)
   } catch (e) {
     return handleError(e)

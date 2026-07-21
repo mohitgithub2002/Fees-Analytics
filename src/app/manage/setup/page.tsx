@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/v2/PageHeader'
 import {
   apiCall, Button, EmptyState, ErrorBanner, Field, inputCls, inputStyle, Modal,
 } from '@/components/v2/ui'
+import { cachedFetch } from '@/lib/v2/client-cache'
 import { fmtAmt, fmtDate } from '@/lib/v2/format'
 import type { ClassroomV2, ClassV2, FeeCategory, FeeStructureV2, SessionV2 } from '@/lib/v2/types'
 
@@ -26,10 +27,10 @@ export default function SetupPage() {
   useEffect(() => {
     let alive = true
     Promise.all([
-      fetch('/api/v2/sessions').then((r) => r.json()),
-      fetch('/api/v2/classes').then((r) => r.json()),
-      fetch('/api/v2/classrooms').then((r) => r.json()),
-      fetch('/api/v2/fee-structures').then((r) => r.json()),
+      cachedFetch<{ data: SessionV2[] }>('/api/v2/sessions', 120_000),
+      cachedFetch<{ data: ClassV2[] }>('/api/v2/classes', 300_000),
+      cachedFetch<{ data: ClassroomV2[] }>('/api/v2/classrooms', 120_000),
+      cachedFetch<{ data: FeeStructureV2[] }>('/api/v2/fee-structures', 120_000),
     ])
       .then(([s, c, r, f]) => {
         if (!alive) return

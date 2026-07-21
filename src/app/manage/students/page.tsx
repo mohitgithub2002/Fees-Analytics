@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/v2/PageHeader'
 import {
   apiCall, Button, DueAmount, EmptyState, ErrorBanner, Field, inputCls, inputStyle, Modal,
 } from '@/components/v2/ui'
+import { cachedFetch } from '@/lib/v2/client-cache'
 import type { ClassV2, PaginationV2, SessionV2 } from '@/lib/v2/types'
 
 interface StudentRow {
@@ -55,8 +56,8 @@ export default function StudentsPage() {
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    fetch('/api/v2/sessions').then((r) => r.json()).then((d) => setSessions(d.data ?? []))
-    fetch('/api/v2/classes').then((r) => r.json()).then((d) => setClasses(d.data ?? []))
+    cachedFetch<{ data: SessionV2[] }>('/api/v2/sessions', 120_000).then((d) => setSessions(d.data ?? [])).catch(console.error)
+    cachedFetch<{ data: ClassV2[] }>('/api/v2/classes', 300_000).then((d) => setClasses(d.data ?? [])).catch(console.error)
   }, [])
 
   // Debounced, filter-aware fetch. A ref-free refreshKey lets modals force a reload.
@@ -251,14 +252,12 @@ function AddStudentModal({
 
   useEffect(() => {
     if (!open || !currentSession) return
-    fetch(`/api/v2/classrooms?sessionId=${currentSession.id}`)
-      .then((r) => r.json())
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    cachedFetch<{ data: any[] }>(`/api/v2/classrooms?sessionId=${currentSession.id}`, 120_000)
       .then((d) =>
-        setClassrooms(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (d.data ?? []).map((c: any) => ({ id: c.id, label: `${c.class.name} · ${c.section}` }))
-        )
+        setClassrooms((d.data ?? []).map((c) => ({ id: c.id, label: `${c.class.name} · ${c.section}` })))
       )
+      .catch(console.error)
   }, [open, currentSession])
 
   async function submit() {

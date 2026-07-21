@@ -1,13 +1,16 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, ok, readJson } from '@/lib/fees/api'
+import { cached, invalidateTags, TAGS } from '@/lib/cache'
 
 export async function GET() {
-  const classes = await prisma.schoolClass.findMany({
-    orderBy: { displayOrder: 'asc' },
-    include: { _count: { select: { classrooms: true, feeStructures: true } } },
-  })
-  return ok({ data: classes })
+  const data = await cached('classes:list', { tags: [TAGS.classes], ttlMs: 300_000 }, () =>
+    prisma.schoolClass.findMany({
+      orderBy: { displayOrder: 'asc' },
+      include: { _count: { select: { classrooms: true, feeStructures: true } } },
+    }),
+  )
+  return ok({ data })
 }
 
 export async function POST(request: NextRequest) {
@@ -24,6 +27,7 @@ export async function POST(request: NextRequest) {
         displayOrder: typeof displayOrder === 'number' ? displayOrder : 0,
       },
     })
+    invalidateTags(TAGS.classes)
     return ok(schoolClass, 201)
   } catch (e) {
     return handleError(e)

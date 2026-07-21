@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, isPositiveAmount, ok, parseId, readJson } from '@/lib/fees/api'
+import { invalidateTags, TAGS } from '@/lib/cache'
 import { $Enums } from '@/generated/prisma/client'
 import { applyStructureToEnrollment, createFeeItem } from '@/lib/fees/fee-items'
 import { InstallmentPlanInput } from '@/lib/fees/installments'
@@ -42,6 +43,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     if ((body as { fromStructure?: boolean }).fromStructure) {
       const created = await prisma.$transaction((tx) => applyStructureToEnrollment(tx, id))
+      invalidateTags(TAGS.fees)
       return ok({ data: created }, 201)
     }
 
@@ -74,6 +76,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       })
     })
     if (!feeItem) return err('enrollment not found', 404)
+    invalidateTags(TAGS.fees)
     return ok(feeItem, 201)
   } catch (e) {
     return handleError(e)

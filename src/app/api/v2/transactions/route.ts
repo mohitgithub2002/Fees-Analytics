@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, isPositiveAmount, ok, parseId, readJson } from '@/lib/fees/api'
+import { invalidateTags, TAGS } from '@/lib/cache'
 import { $Enums, Prisma } from '@/generated/prisma/client'
 import { allocatePayment } from '@/lib/fees/allocation'
 
@@ -104,6 +105,7 @@ export async function POST(request: NextRequest) {
         paidAt,
       })
     )
+    invalidateTags(TAGS.fees)
     return ok(transaction, 201)
   } catch (e) {
     return handleError(e)

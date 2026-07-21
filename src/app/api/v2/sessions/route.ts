@@ -1,13 +1,16 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, ok, readJson } from '@/lib/fees/api'
+import { cached, invalidateTags, TAGS } from '@/lib/cache'
 
 export async function GET() {
-  const sessions = await prisma.academicSession.findMany({
-    orderBy: { startDate: 'desc' },
-    include: { _count: { select: { enrollments: true, classrooms: true } } },
-  })
-  return ok({ data: sessions })
+  const data = await cached('sessions:list', { tags: [TAGS.sessions], ttlMs: 120_000 }, () =>
+    prisma.academicSession.findMany({
+      orderBy: { startDate: 'desc' },
+      include: { _count: { select: { enrollments: true, classrooms: true } } },
+    }),
+  )
+  return ok({ data })
 }
 
 export async function POST(request: NextRequest) {
@@ -39,6 +42,8 @@ export async function POST(request: NextRequest) {
         },
       })
     })
+    // isCurrent changes the default session for analytics/student lists.
+    invalidateTags(TAGS.sessions, TAGS.fees)
     return ok(session, 201)
   } catch (e) {
     return handleError(e)

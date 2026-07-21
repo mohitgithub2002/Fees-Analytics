@@ -3,6 +3,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import type { FeeCategory, InstallmentStatus } from '@/lib/v2/types'
+import { invalidateClientCache } from '@/lib/v2/client-cache'
 
 /* ── Shared UI primitives for the v2 management screens ─────────── */
 
@@ -216,5 +217,8 @@ export async function apiCall<T = any>(
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || `request failed (${res.status})`)
+  // A successful write can change any cached read — drop the client cache so
+  // the next fetch reflects it (the server cache is tag-invalidated too).
+  invalidateClientCache()
   return data as T
 }

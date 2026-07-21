@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, isPositiveAmount, ok, parseId, readJson } from '@/lib/fees/api'
+import { invalidateTags, TAGS } from '@/lib/cache'
 import { applyDiscount } from '@/lib/fees/fee-items'
 
 /**
@@ -26,6 +27,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const feeItem = await prisma.$transaction((tx) =>
       applyDiscount(tx, id, amount, reason, appliedBy)
     )
+    invalidateTags(TAGS.fees)
     return ok(feeItem)
   } catch (e) {
     return handleError(e)

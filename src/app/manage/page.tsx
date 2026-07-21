@@ -8,6 +8,7 @@ import {
 import { PageHeader } from '@/components/v2/PageHeader'
 import { CollectedVsPending, DuesDistribution, PendingDuesByClass } from '@/components/v2/Charts'
 import { DueAmount, EmptyState } from '@/components/v2/ui'
+import { cachedFetch } from '@/lib/v2/client-cache'
 import { fmtCur } from '@/lib/v2/format'
 import type { AnalyticsV2, SessionV2 } from '@/lib/v2/types'
 
@@ -50,11 +51,10 @@ export default function ManageDashboard() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/v2/sessions')
-      .then((r) => r.json())
+    cachedFetch<{ data: SessionV2[] }>('/api/v2/sessions', 120_000)
       .then((d) => {
         setSessions(d.data ?? [])
-        const current = (d.data ?? []).find((s: SessionV2) => s.isCurrent)
+        const current = (d.data ?? []).find((s) => s.isCurrent)
         if (current) setSessionId(current.id)
         else if (d.data?.length) setSessionId(d.data[0].id)
       })
@@ -64,8 +64,7 @@ export default function ManageDashboard() {
   useEffect(() => {
     if (!sessionId) return
     let alive = true
-    fetch(`/api/v2/analytics?sessionId=${sessionId}`)
-      .then((r) => (r.ok ? r.json() : null))
+    cachedFetch<AnalyticsV2>(`/api/v2/analytics?sessionId=${sessionId}`, 30_000)
       .then((d) => {
         if (!alive) return
         if (d) setAnalytics(d)

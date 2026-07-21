@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, ok, parseId, readJson } from '@/lib/fees/api'
+import { invalidateTags, TAGS } from '@/lib/cache'
 import { $Enums } from '@/generated/prisma/client'
 import { FeeItemError } from '@/lib/fees/fee-items'
 
@@ -74,6 +75,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         },
       })
     })
+    invalidateTags(TAGS.fees, TAGS.classrooms)
     return ok(enrollment)
   } catch (e) {
     return handleError(e)

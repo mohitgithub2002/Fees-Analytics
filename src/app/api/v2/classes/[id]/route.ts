@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, ok, parseId, readJson } from '@/lib/fees/api'
+import { invalidateTags, TAGS } from '@/lib/cache'
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const id = parseId((await params).id)
@@ -24,6 +25,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         ...(isActive !== undefined ? { isActive } : {}),
       },
     })
+    invalidateTags(TAGS.classes)
     return ok(schoolClass)
   } catch (e) {
     return handleError(e)

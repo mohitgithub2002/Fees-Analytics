@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, ok, parseId, readJson } from '@/lib/fees/api'
+import { cached, invalidateTags, TAGS } from '@/lib/cache'
 import { Prisma } from '@/generated/prisma/client'
 
 // Whitelisted sort columns → aggregated aliases (guards against SQL injection).
@@ -72,6 +73,8 @@ export async function GET(request: NextRequest) {
     : Prisma.empty
   const orderSql = Prisma.raw(`"${sortKey}" ${sortDir}`)
 
+  const cacheKey = `students:${sessionId}:${classId ?? ''}:${feeType}:${minDue ?? ''}:${maxDue ?? ''}:${sortKey}:${sortDir}:${page}:${limit}:${search ?? ''}`
+  const { data, total } = await cached(cacheKey, { tags: [TAGS.fees], ttlMs: 20_000 }, async () => {
   const rows = await prisma.$queryRaw<StudentRow[]>(Prisma.sql`
     WITH cur AS (
       SELECT
@@ -108,13 +111,15 @@ export async function GET(request: NextRequest) {
     LIMIT ${limit} OFFSET ${(page - 1) * limit}
   `)
 
-  const total = rows.length ? Number(rows[0].fullCount) : 0
-  const data = rows.map((r) => ({
-    id: r.id, name: r.name, fatherName: r.fatherName, admissionNo: r.admissionNo,
-    class: r.class, section: r.section,
-    schoolDue: Number(r.schoolDue), busDue: Number(r.busDue), otherDue: Number(r.otherDue),
-    currentDue: Number(r.currentDue), pastDue: Number(r.pastDue), totalDue: Number(r.totalDue),
-  }))
+    const total = rows.length ? Number(rows[0].fullCount) : 0
+    const data = rows.map((r) => ({
+      id: r.id, name: r.name, fatherName: r.fatherName, admissionNo: r.admissionNo,
+      class: r.class, section: r.section,
+      schoolDue: Number(r.schoolDue), busDue: Number(r.busDue), otherDue: Number(r.otherDue),
+      currentDue: Number(r.currentDue), pastDue: Number(r.pastDue), totalDue: Number(r.totalDue),
+    }))
+    return { data, total }
+  })
 
   return ok({
     data,
@@ -147,6 +152,7 @@ export async function POST(request: NextRequest) {
         remarks: remarks?.trim() || null,
       },
     })
+    invalidateTags(TAGS.fees)
     return ok(student, 201)
   } catch (e) {
     return handleError(e)

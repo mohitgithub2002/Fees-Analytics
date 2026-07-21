@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { err, handleError, ok, parseId } from '@/lib/fees/api'
+import { invalidateTags, TAGS } from '@/lib/cache'
 import { cancelTransaction } from '@/lib/fees/allocation'
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -45,6 +46,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
 
   try {
     const transaction = await prisma.$transaction((tx) => cancelTransaction(tx, id))
+    invalidateTags(TAGS.fees)
     return ok(transaction)
   } catch (e) {
     return handleError(e)
