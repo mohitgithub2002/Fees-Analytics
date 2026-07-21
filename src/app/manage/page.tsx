@@ -6,6 +6,7 @@ import {
   Users, IndianRupee, TrendingUp, AlertCircle, Percent, Clock, School, Bus, Sparkles,
 } from 'lucide-react'
 import { PageHeader } from '@/components/v2/PageHeader'
+import { CollectedVsPending, DuesDistribution, PendingDuesByClass } from '@/components/v2/Charts'
 import { DueAmount, EmptyState } from '@/components/v2/ui'
 import { fmtCur } from '@/lib/v2/format'
 import type { AnalyticsV2, SessionV2 } from '@/lib/v2/types'
@@ -132,8 +133,23 @@ export default function ManageDashboard() {
                 <StatCard label="Bus + Other Due" value={fmtCur((cat('BUS')?.dueAmount ?? 0) + (cat('OTHER')?.dueAmount ?? 0))} icon={Bus} delay={315} />
               </div>
 
+              {/* Charts */}
+              {analytics.byClass.length > 0 && (
+                <>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 animate-fadeup" style={{ animationDelay: '360ms' }}>
+                    <div className="lg:col-span-2">
+                      <PendingDuesByClass byClass={analytics.byClass} />
+                    </div>
+                    <DuesDistribution byCategory={analytics.byCategory} />
+                  </div>
+                  <div className="animate-fadeup" style={{ animationDelay: '405ms' }}>
+                    <CollectedVsPending byClass={analytics.byClass} />
+                  </div>
+                </>
+              )}
+
               {/* Class-wise table */}
-              <div className="card overflow-hidden animate-fadeup" style={{ animationDelay: '360ms' }}>
+              <div className="card overflow-hidden animate-fadeup" style={{ animationDelay: '450ms' }}>
                 <div className="px-5 h-14 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
                   <div className="flex items-center gap-2">
                     <Sparkles className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
