@@ -3,11 +3,13 @@ import { prisma } from '@/lib/prisma'
 import { cookieOptions, COOKIE_NAME } from '@/lib/auth/config'
 import { createSessionToken } from '@/lib/auth/session'
 import { verifyPassword } from '@/lib/auth/password'
+import { normalizePhone } from '@/lib/auth/phone'
 
 /**
  * Simple in-memory throttle to slow credential-stuffing: after too many
- * failures for an email within the window, further attempts are rejected for
- * a cool-off period. Per-instance only — a coarse safety net, not a hard limit.
+ * failures for a phone number within the window, further attempts are rejected
+ * for a cool-off period. Per-instance only — a coarse safety net, not a hard
+ * limit.
  */
 const attempts = new Map<string, { count: number; first: number }>()
 const MAX_ATTEMPTS = 8
@@ -27,40 +29,40 @@ function recordFailure(key: string) {
 }
 
 export async function POST(request: NextRequest) {
-  let body: { email?: string; password?: string } | null
+  let body: { phone?: string; password?: string } | null
   try {
     body = await request.json()
   } catch {
     return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 })
   }
 
-  const email = body?.email?.trim().toLowerCase()
+  const phone = body?.phone ? normalizePhone(body.phone) : null
   const password = body?.password
-  if (!email || !password) {
-    return NextResponse.json({ error: 'email and password are required' }, { status: 400 })
+  if (!phone || !password) {
+    return NextResponse.json({ error: 'mobile number and password are required' }, { status: 400 })
   }
 
-  if (throttled(email)) {
+  if (throttled(phone)) {
     return NextResponse.json(
       { error: 'too many failed attempts; please try again later' },
       { status: 429 },
     )
   }
 
-  const user = await prisma.user.findUnique({ where: { email } })
+  const user = await prisma.user.findUnique({ where: { phone } })
   // Verify even when the user is missing/inactive to keep timing uniform.
   const ok = user && user.isActive && verifyPassword(password, user.passwordHash)
   if (!ok || !user) {
-    recordFailure(email)
-    return NextResponse.json({ error: 'invalid email or password' }, { status: 401 })
+    recordFailure(phone)
+    return NextResponse.json({ error: 'invalid mobile number or password' }, { status: 401 })
   }
 
-  attempts.delete(email)
+  attempts.delete(phone)
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
 
   const token = await createSessionToken(user)
   const res = NextResponse.json({
-    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    user: { id: user.id, phone: user.phone, name: user.name, role: user.role },
   })
   res.cookies.set(COOKIE_NAME, token, cookieOptions())
   return res

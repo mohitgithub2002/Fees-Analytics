@@ -9,7 +9,7 @@
 
 export interface TokenPayload {
   sub: number // user id
-  email: string
+  phone: string
   name: string
   role: string
   exp: number // epoch ms

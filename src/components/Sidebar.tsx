@@ -9,23 +9,28 @@ import {
   Users,
   Receipt,
   Settings,
+  ShieldCheck,
   GraduationCap,
   LogOut,
 } from 'lucide-react'
 
 const NAV = [
-  { icon: LayoutDashboard, label: 'Recovery (Legacy)', href: '/' },
-  { icon: BarChart3, label: 'Dashboard', href: '/manage' },
-  { icon: Users, label: 'Students', href: '/manage/students' },
-  { icon: Receipt, label: 'Transactions', href: '/manage/transactions' },
-  { icon: Settings, label: 'Setup', href: '/manage/setup' },
+  { icon: LayoutDashboard, label: 'Recovery (Legacy)', href: '/', superuserOnly: false },
+  { icon: BarChart3, label: 'Dashboard', href: '/manage', superuserOnly: false },
+  { icon: Users, label: 'Students', href: '/manage/students', superuserOnly: false },
+  { icon: Receipt, label: 'Transactions', href: '/manage/transactions', superuserOnly: false },
+  { icon: Settings, label: 'Setup', href: '/manage/setup', superuserOnly: false },
+  { icon: ShieldCheck, label: 'Users', href: '/manage/users', superuserOnly: true },
 ]
 
 interface AuthUser {
   name: string
-  email: string
+  phone: string
   role: string
 }
+
+const roleLabel = (role: string) =>
+  role === 'SUPERUSER' ? 'Super Admin' : role.charAt(0) + role.slice(1).toLowerCase()
 
 export function Sidebar() {
   const pathname = usePathname()
@@ -88,7 +93,7 @@ export function Sidebar() {
       <nav className="flex-1 px-3 pt-4 overflow-y-auto">
         <p className="label-micro px-2 mb-2">Menu</p>
         <div className="space-y-0.5">
-          {NAV.map((item) => {
+          {NAV.filter((item) => !item.superuserOnly || user?.role === 'SUPERUSER').map((item) => {
             const active = isActive(item.href)
             return (
               <Link
@@ -135,7 +140,7 @@ export function Sidebar() {
               {user ? user.name : 'Loading…'}
             </p>
             <p className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-              {user ? user.role.charAt(0) + user.role.slice(1).toLowerCase() : ''}
+              {user ? roleLabel(user.role) : ''}
             </p>
           </div>
           <button

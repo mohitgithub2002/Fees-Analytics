@@ -9,19 +9,19 @@ import { signToken, verifyToken } from './token'
 
 export interface SessionUser {
   id: number
-  email: string
+  phone: string
   name: string
   role: string
 }
 
 export async function createSessionToken(user: {
   id: number
-  email: string
+  phone: string
   name: string
   role: string
 }): Promise<string> {
   return signToken(
-    { sub: user.id, email: user.email, name: user.name, role: user.role, exp: Date.now() + SESSION_TTL_MS },
+    { sub: user.id, phone: user.phone, name: user.name, role: user.role, exp: Date.now() + SESSION_TTL_MS },
     getAuthSecret(),
   )
 }
@@ -32,5 +32,11 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   if (!token) return null
   const payload = await verifyToken(token, getAuthSecret())
   if (!payload) return null
-  return { id: payload.sub, email: payload.email, name: payload.name, role: payload.role }
+  return { id: payload.sub, phone: payload.phone, name: payload.name, role: payload.role }
+}
+
+/** True when the current session belongs to the superuser. */
+export async function isSuperuser(): Promise<boolean> {
+  const user = await getCurrentUser()
+  return user?.role === 'SUPERUSER'
 }

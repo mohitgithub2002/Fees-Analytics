@@ -5,7 +5,8 @@ import { getCurrentUser } from '@/lib/auth/session'
 /**
  * Public auth status for the login screen and the sidebar:
  * - authenticated + the current user (if signed in)
- * - needsSetup: true when no accounts exist yet (first-run bootstrap)
+ * - needsSetup: true when no accounts exist yet (the superuser must be created
+ *   via `npm run db:create-superuser` — there is no in-app bootstrap)
  */
 export async function GET() {
   const user = await getCurrentUser()

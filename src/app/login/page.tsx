@@ -9,9 +9,9 @@ function LoginInner() {
   const params = useSearchParams()
   const next = params.get('next') || '/manage'
 
-  const [mode, setMode] = useState<'loading' | 'login' | 'setup'>('loading')
-  const [email, setEmail] = useState('')
-  const [name, setName] = useState('')
+  const [ready, setReady] = useState(false)
+  const [needsSetup, setNeedsSetup] = useState(false)
+  const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -24,9 +24,10 @@ function LoginInner() {
           router.replace(next)
           return
         }
-        setMode(d.needsSetup ? 'setup' : 'login')
+        setNeedsSetup(Boolean(d.needsSetup))
+        setReady(true)
       })
-      .catch(() => setMode('login'))
+      .catch(() => setReady(true))
   }, [router, next])
 
   async function submit(e: React.FormEvent) {
@@ -34,13 +35,10 @@ function LoginInner() {
     setError('')
     setBusy(true)
     try {
-      const url = mode === 'setup' ? '/api/auth/setup' : '/api/auth/login'
-      const payload =
-        mode === 'setup' ? { email, name, password } : { email, password }
-      const res = await fetch(url, {
+      const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ phone, password }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Something went wrong')
@@ -77,7 +75,7 @@ function LoginInner() {
         </div>
 
         <div className="card p-6">
-          {mode === 'loading' ? (
+          {!ready ? (
             <div className="flex items-center justify-center py-10" style={{ color: 'var(--text-muted)' }}>
               <Loader2 className="w-5 h-5 animate-spin" />
             </div>
@@ -85,12 +83,10 @@ function LoginInner() {
             <>
               <div className="mb-5">
                 <h2 className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                  {mode === 'setup' ? 'Create admin account' : 'Sign in'}
+                  Sign in
                 </h2>
                 <p className="text-[12.5px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                  {mode === 'setup'
-                    ? 'No accounts exist yet. Create the first administrator to secure the system.'
-                    : 'Enter your credentials to access the dashboard.'}
+                  Enter your mobile number and password to continue.
                 </p>
               </div>
 
@@ -104,28 +100,17 @@ function LoginInner() {
                   </div>
                 )}
 
-                {mode === 'setup' && (
-                  <label className="block">
-                    <span className="label-micro block mb-1.5">Full Name</span>
-                    <input
-                      className="w-full h-10 px-3 rounded-lg text-[13px] outline-none"
-                      style={inputStyle}
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      autoComplete="name"
-                    />
-                  </label>
-                )}
-
                 <label className="block">
-                  <span className="label-micro block mb-1.5">Email</span>
+                  <span className="label-micro block mb-1.5">Mobile Number</span>
                   <input
-                    type="email"
-                    className="w-full h-10 px-3 rounded-lg text-[13px] outline-none"
+                    type="tel"
+                    inputMode="numeric"
+                    className="w-full h-10 px-3 rounded-lg text-[13px] outline-none mono"
                     style={inputStyle}
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    autoComplete="email"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    autoComplete="username"
+                    placeholder="98765 43210"
                     autoFocus
                   />
                 </label>
@@ -138,14 +123,13 @@ function LoginInner() {
                     style={inputStyle}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    autoComplete={mode === 'setup' ? 'new-password' : 'current-password'}
-                    placeholder={mode === 'setup' ? 'At least 8 characters' : ''}
+                    autoComplete="current-password"
                   />
                 </label>
 
                 <button
                   type="submit"
-                  disabled={busy || !email || !password || (mode === 'setup' && !name)}
+                  disabled={busy || !phone || !password}
                   className="w-full h-10 rounded-lg text-[13px] font-medium inline-flex items-center justify-center gap-2 transition-transform hover:-translate-y-px active:translate-y-0 disabled:opacity-40 disabled:pointer-events-none"
                   style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
                 >
@@ -154,10 +138,20 @@ function LoginInner() {
                   ) : (
                     <>
                       <Lock className="w-3.5 h-3.5" />
-                      {mode === 'setup' ? 'Create account & sign in' : 'Sign in'}
+                      Sign in
                     </>
                   )}
                 </button>
+
+                {needsSetup && (
+                  <p className="text-[11.5px] leading-relaxed pt-1" style={{ color: 'var(--text-muted)' }}>
+                    No accounts exist yet. Create the superuser on the server with{' '}
+                    <code className="mono" style={{ color: 'var(--text-secondary)' }}>
+                      npm run db:create-superuser
+                    </code>
+                    , then sign in.
+                  </p>
+                )}
               </form>
             </>
           )}
