@@ -321,3 +321,29 @@ model TransactionAllocation {
   @@index([transactionId])
   @@index([installmentId])
 }
+
+// ============================================================================
+// AUTH — accounts that may access the fees management system
+// ============================================================================
+
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+// A staff/admin account. Passwords are stored as scrypt hashes
+// ("scrypt$<salt>$<hash>"); sessions are stateless signed cookies, so no
+// session table is needed. The first account is created via the setup flow.
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         UserRole  @default(STAFF)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([email])
+}

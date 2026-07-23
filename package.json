@@ -13,6 +13,7 @@
     "db:seed": "npx tsx prisma/seed.ts",
     "db:load-csv": "npx tsx prisma/load-csv.ts",
     "db:migrate-v2": "npx tsx prisma/migrate-v2.ts",
+    "db:create-admin": "npx tsx prisma/create-admin.ts",
     "db:studio": "prisma studio"
   },
   "prisma": {
