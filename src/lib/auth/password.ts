@@ -22,3 +22,8 @@ export function verifyPassword(password: string, stored: string): boolean {
   const actual = scryptSync(password, salt, expected.length)
   return expected.length === actual.length && timingSafeEqual(expected, actual)
 }
+
+/** A random, human-typeable temporary password for newly created/reset accounts. */
+export function generateTempPassword(): string {
+  return randomBytes(9).toString('base64url') // 12 chars, URL-safe
+}

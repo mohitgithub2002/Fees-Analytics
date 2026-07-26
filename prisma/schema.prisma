@@ -106,9 +106,10 @@ model AcademicSession {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  classrooms    Classroom[]
-  enrollments   StudentEnrollment[]
-  feeStructures FeeStructure[]
+  classrooms      Classroom[]
+  enrollments     StudentEnrollment[]
+  feeStructures   FeeStructure[]
+  calendarEvents  CalendarEvent[]
 }
 
 // Class master (session-independent), e.g. "LKG", "I", "X".
@@ -122,6 +123,7 @@ model SchoolClass {
 
   classrooms    Classroom[]
   feeStructures FeeStructure[]
+  chapters      Chapter[]
 }
 
 // A class running in a specific session (optionally split into sections).
@@ -137,6 +139,7 @@ model Classroom {
   class       SchoolClass         @relation(fields: [classId], references: [id])
   session     AcademicSession     @relation(fields: [sessionId], references: [id])
   enrollments StudentEnrollment[]
+  assignments TeacherAssignment[]
 
   @@unique([classId, sessionId, section])
   @@index([sessionId])
@@ -349,4 +352,292 @@ model User {
   updatedAt    DateTime  @updatedAt
 
   @@index([phone])
+}
+
+// ============================================================================
+// TEACHER & SYLLABUS MODULE
+// Layered on top of the fees schema above. AcademicSession, SchoolClass,
+// Classroom and User are reused as-is (see back-relations added above).
+// Admins and teachers are two entirely separate systems: separate identity
+// table, separate password store, separate session cookie, separate route
+// namespace. Teacher/User cross-references (createdById, assignedById,
+// markedById) are soft Int columns, not Prisma relations — see AGENTS docs.
+// ============================================================================
+
+enum SessionType {
+  TEACHING
+  REVISION
+  QA
+  TEST
+}
+
+enum TopicStatus {
+  PARTIAL
+  COMPLETE
+}
+
+enum PacingStatus {
+  ON_TRACK
+  BEHIND
+  AHEAD
+  COMPLETED
+}
+
+enum ActorType {
+  ADMIN
+  TEACHER
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  ON_LEAVE
+}
+
+enum CalendarEventType {
+  HOLIDAY
+  EXAM
+  EVENT
+}
+
+// The teacher identity table. Structurally parallel to User, but independent
+// — see AGENTS docs for why teachers are not folded into the User/UserRole model.
+model Teacher {
+  id            Int       @id @default(autoincrement())
+  employeeId    String    @unique
+  name          String
+  phone         String    @unique
+  email         String?   @unique
+  passwordHash  String
+  qualification String?
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  createdById   Int? // User.id of the creating admin — soft reference
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  assignments TeacherAssignment[]
+  attendance  TeacherAttendance[]
+
+  @@index([employeeId])
+  @@index([phone])
+}
+
+// Subject master — Physics, Mathematics, and so on.
+model Subject {
+  id           Int      @id @default(autoincrement())
+  name         String   @unique
+  code         String?  @unique
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  chapters    Chapter[]
+  assignments TeacherAssignment[]
+}
+
+// Chapters, scoped to a (subject, class) pair — the same subject has a
+// different syllabus at each class level.
+model Chapter {
+  id              Int      @id @default(autoincrement())
+  subjectId       Int
+  classId         Int
+  name            String
+  displayOrder    Int
+  periodsRequired Int? // estimated teaching periods; feeds the pacing engine
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  subject Subject     @relation(fields: [subjectId], references: [id])
+  class   SchoolClass @relation(fields: [classId], references: [id])
+
+  subtopics    Subtopic[]
+  pacing       SyllabusPacing[]
+  topicDetails SessionTopicDetail[]
+
+  @@unique([subjectId, classId, name])
+  @@index([subjectId, classId])
+}
+
+// Subtopics inside a chapter — the level at which teaching completion is marked.
+model Subtopic {
+  id           Int      @id @default(autoincrement())
+  chapterId    Int
+  name         String
+  displayOrder Int
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  chapter      Chapter              @relation(fields: [chapterId], references: [id])
+  topicDetails SessionTopicDetail[]
+
+  @@index([chapterId])
+}
+
+// Links a teacher to a classroom (which already encodes class + section +
+// academic session) and subject: "this teacher teaches this subject to this
+// section this year". Deactivating preserves historical session logs.
+model TeacherAssignment {
+  id           Int      @id @default(autoincrement())
+  teacherId    Int
+  classroomId  Int
+  subjectId    Int
+  isActive     Boolean  @default(true)
+  assignedById Int? // User.id of the assigning admin — soft reference
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  teacher   Teacher   @relation(fields: [teacherId], references: [id])
+  classroom Classroom @relation(fields: [classroomId], references: [id])
+  subject   Subject   @relation(fields: [subjectId], references: [id])
+
+  timetableSlots TimetableSlot[]
+  sessionLogs    SessionLog[]
+  pacing         SyllabusPacing[]
+
+  @@unique([teacherId, classroomId, subjectId])
+  @@index([classroomId])
+  @@index([teacherId])
+}
+
+// Period-wise weekly schedule. Reference only — SessionLog has no FK here,
+// see SessionLog for why.
+model TimetableSlot {
+  id           Int      @id @default(autoincrement())
+  assignmentId Int
+  dayOfWeek    Int // 1 = Monday ... 6 = Saturday
+  periodNumber Int
+  startTime    String // "HH:mm"
+  endTime      String // "HH:mm"
+  roomLabel    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignment TeacherAssignment @relation(fields: [assignmentId], references: [id])
+
+  @@unique([assignmentId, dayOfWeek, periodNumber])
+  @@index([dayOfWeek])
+}
+
+// Holidays, exams and events attached to an academic session. Feeds the
+// working-days calculation that drives the pacing engine.
+model CalendarEvent {
+  id          Int               @id @default(autoincrement())
+  sessionId   Int
+  title       String
+  type        CalendarEventType
+  startDate   DateTime          @db.Date
+  endDate     DateTime          @db.Date
+  description String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  session AcademicSession @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId])
+  @@index([startDate, endDate])
+}
+
+// A logged teaching, revision, Q&A or test session — the header. No timetable
+// foreign key: a teacher who arrived late, swapped periods, or covered an
+// absent colleague's class must still be able to record what they actually
+// taught. Timetable stays a planning artefact; logging stays free-form.
+model SessionLog {
+  id           Int         @id @default(autoincrement())
+  assignmentId Int
+  sessionDate  DateTime    @db.Date
+  type         SessionType
+  notes        String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  assignment TeacherAssignment    @relation(fields: [assignmentId], references: [id])
+  topics     SessionTopicDetail[]
+
+  @@index([assignmentId])
+  @@index([sessionDate])
+}
+
+// Which subtopics/chapters a session covered. TEACHING/REVISION rows point at
+// a subtopic; QA/TEST rows point at a chapter (coarser granularity — a Q&A or
+// test spans the whole chapter, not one subtopic).
+model SessionTopicDetail {
+  id           Int         @id @default(autoincrement())
+  sessionLogId Int
+  subtopicId   Int?
+  chapterId    Int?
+  status       TopicStatus @default(COMPLETE)
+  notes        String?
+  createdAt    DateTime    @default(now())
+
+  sessionLog SessionLog @relation(fields: [sessionLogId], references: [id], onDelete: Cascade)
+  subtopic   Subtopic?  @relation(fields: [subtopicId], references: [id])
+  chapter    Chapter?   @relation(fields: [chapterId], references: [id])
+
+  @@index([sessionLogId])
+  @@index([subtopicId])
+  @@index([chapterId])
+}
+
+// Derived pacing data — never written by a human, always recomputed. One row
+// per (assignment, chapter) pair, refreshed nightly and on demand whenever
+// the calendar or a teacher's attendance changes.
+model SyllabusPacing {
+  id                Int          @id @default(autoincrement())
+  assignmentId      Int
+  chapterId         Int
+  expectedStartDate DateTime?    @db.Date
+  expectedEndDate   DateTime?    @db.Date
+  status            PacingStatus @default(ON_TRACK)
+  daysBehind        Int? // positive = behind, negative = ahead, zero = on schedule
+  completionPercent Int          @default(0)
+  calculatedAt      DateTime     @default(now())
+
+  assignment TeacherAssignment @relation(fields: [assignmentId], references: [id])
+  chapter    Chapter           @relation(fields: [chapterId], references: [id])
+
+  @@unique([assignmentId, chapterId])
+  @@index([status])
+}
+
+// Daily attendance, written by admin.
+model TeacherAttendance {
+  id         Int              @id @default(autoincrement())
+  teacherId  Int
+  date       DateTime         @db.Date
+  status     AttendanceStatus
+  remarks    String?
+  markedById Int? // User.id of the recording admin — soft reference
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  teacher Teacher @relation(fields: [teacherId], references: [id])
+
+  @@unique([teacherId, date])
+  @@index([date])
+}
+
+// Immutable action log. Admins live in User, teachers live in Teacher — there
+// is no single table a foreign key could point at, so the actor is stored
+// polymorphically. actorName is a denormalised snapshot so the log stays
+// readable even after the actor account is gone.
+model TeachingAuditLog {
+  id         Int       @id @default(autoincrement())
+  actorType  ActorType
+  actorId    Int
+  actorName  String
+  action     String
+  entityType String
+  entityId   Int?
+  oldValue   Json?
+  newValue   Json?
+  createdAt  DateTime  @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorType, actorId])
+  @@index([createdAt])
 }
