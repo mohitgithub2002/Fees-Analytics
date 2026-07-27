@@ -15,10 +15,13 @@ export async function GET(request: NextRequest) {
   const subtopics = await prisma.subtopic.findMany({
     where: {
       isActive: true,
-      chapter: {
+      topic: {
         isActive: true,
-        ...(classId ? { classId } : {}),
-        ...(subjectId ? { subjectId } : {}),
+        chapter: {
+          isActive: true,
+          ...(classId ? { classId } : {}),
+          ...(subjectId ? { subjectId } : {}),
+        },
       },
       topicDetails: {
         none: { status: 'COMPLETE', sessionLog: { type: 'TEACHING' } },
@@ -28,16 +31,26 @@ export async function GET(request: NextRequest) {
       id: true,
       name: true,
       displayOrder: true,
-      chapter: {
+      topic: {
         select: {
           id: true,
           name: true,
-          subject: { select: { id: true, name: true } },
-          class: { select: { id: true, name: true } },
+          chapter: {
+            select: {
+              id: true,
+              name: true,
+              subject: { select: { id: true, name: true } },
+              class: { select: { id: true, name: true } },
+            },
+          },
         },
       },
     },
-    orderBy: [{ chapter: { displayOrder: 'asc' } }, { displayOrder: 'asc' }],
+    orderBy: [
+      { topic: { chapter: { displayOrder: 'asc' } } },
+      { topic: { displayOrder: 'asc' } },
+      { displayOrder: 'asc' },
+    ],
   })
 
   return ok(subtopics)

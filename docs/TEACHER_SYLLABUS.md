@@ -53,7 +53,7 @@ AcademicSession ──── CalendarEvent (holidays / exams / events)
    │
    └── Classroom ──── SchoolClass
           │                │
-          │                └── Chapter ──── Subtopic
+          │                └── Chapter ──── Topic ──── Subtopic
           │                       │  (scoped to subject + class:
           │                       │   Class 9 Physics ≠ Class 10 Physics)
           │                       │
@@ -82,7 +82,8 @@ here can accidentally join across the fees/teaching boundary.
 | `Teacher` | `employeeId` (unique), `phone` (unique), `email?` (unique), `passwordHash`, `qualification?`, `isActive` | Login by `employeeId` **or** `phone` |
 | `Subject` | `name` (unique), `code?`, `displayOrder` | e.g. Physics, Mathematics |
 | `Chapter` | `subjectId`, `classId`, `displayOrder`, `periodsRequired?` | `@@unique([subjectId, classId, name])`. `periodsRequired` weights the pacing split |
-| `Subtopic` | `chapterId`, `displayOrder` | the level completion is marked at |
+| `Topic` | `chapterId`, `displayOrder` | intermediate grouping: a chapter contains topics, a topic contains subtopics |
+| `Subtopic` | `topicId`, `displayOrder` | the level completion is marked at; belongs to a topic (not the chapter directly) |
 | `TeacherAssignment` | `teacherId`, `classroomId`, `subjectId` | `@@unique([teacherId, classroomId, subjectId])`. Classroom already encodes class+section+session, so no separate year column is needed and it can't drift |
 | `TimetableSlot` | `assignmentId`, `dayOfWeek` (1=Mon..6=Sat), `periodNumber`, `startTime`, `endTime` | `@@unique([assignmentId, dayOfWeek, periodNumber])`; clash-checked against the same teacher/classroom on create |
 | `CalendarEvent` | `sessionId`, `type` (`HOLIDAY`\|`EXAM`\|`EVENT`), `startDate`, `endDate` | feeds working-day counting |
@@ -93,8 +94,8 @@ here can accidentally join across the fees/teaching boundary.
 | `TeachingAuditLog` | `actorType` (`ADMIN`\|`TEACHER`), `actorId`, `actorName`, `action`, `entityType`, `entityId?`, `oldValue?`, `newValue?` (Json) | `actorName` is a denormalised snapshot — the log stays readable even after the account is deleted |
 
 Soft deletes (`isActive = false`) are used throughout the syllabus master
-data (`Subject`, `Chapter`, `Subtopic`, `TeacherAssignment`) so a chapter
-being retired never breaks a historical `SessionLog`.
+data (`Subject`, `Chapter`, `Topic`, `Subtopic`, `TeacherAssignment`) so a
+chapter being retired never breaks a historical `SessionLog`.
 
 ## Authentication mechanics
 
@@ -175,7 +176,8 @@ now?**
    walks forward through working days assigning `expectedStartDate` /
    `expectedEndDate` per chapter.
 3. **Actual completion** (`src/lib/teaching/progress.ts`) — for each
-   subtopic in the chapter, the latest `SessionTopicDetail` row logged
+   subtopic in the chapter (flattened across all its topics), the latest
+   `SessionTopicDetail` row logged
    against **this assignment** with `sessionLog.type === 'TEACHING'` gives its
    status. `completionPercent = complete subtopics / total subtopics × 100`.
    (Deliberately `TEACHING`-only — `REVISION` rows are tracked so revision
@@ -258,7 +260,9 @@ authenticated admin. 🟢 = authenticated teacher. 🟡 = public.
 | PATCH / DELETE | `/admin/subjects/[id]` | Update / soft-delete |
 | GET / POST | `/admin/chapters` (`?subjectId&classId`) | List / create |
 | PATCH / DELETE | `/admin/chapters/[id]` | Update / soft-delete |
-| GET / POST | `/admin/subtopics` (`?chapterId`) | List / create |
+| GET / POST | `/admin/topics` (`?chapterId`) | List / create |
+| PATCH / DELETE | `/admin/topics/[id]` | Update / soft-delete |
+| GET / POST | `/admin/subtopics` (`?topicId`) | List / create |
 | PATCH / DELETE | `/admin/subtopics/[id]` | Update / soft-delete |
 
 ### Admin — assignments & timetable
@@ -313,7 +317,7 @@ authenticated admin. 🟢 = authenticated teacher. 🟡 = public.
 | GET | `/teacher/assignments` | Own assignments, current session only |
 | GET | `/teacher/schedule` | Own weekly timetable |
 | GET | `/teacher/schedule/today` | Today's periods (empty array on Sunday) |
-| GET | `/teacher/syllabus/[assignmentId]` | Chapter→subtopic tree annotated with own completion status |
+| GET | `/teacher/syllabus/[assignmentId]` | Chapter→topic→subtopic tree annotated with own completion status |
 | GET | `/teacher/pacing` | Own pacing status by chapter |
 | GET | `/teacher/dashboard/overview` | Assignment count, today's periods, own completion + pacing breakdown |
 | GET | `/teacher/dashboard/pending` | Subtopics still unmarked, per own assignment |
@@ -329,7 +333,7 @@ authenticated admin. 🟢 = authenticated teacher. 🟡 = public.
 | PATCH | `/teacher/sessions/[id]/topics/[tid]` | Update status (`PARTIAL`→`COMPLETE`) |
 | DELETE | `/teacher/sessions/[id]/topics/[tid]` | Remove a row — **same day only** |
 
-47 routes total (32 admin + 15 teacher).
+49 routes total (34 admin + 15 teacher).
 
 ## Request lifecycle, worked example
 
@@ -338,7 +342,7 @@ This is the exact sequence exercised end-to-end during development
 files — they never share state):
 
 1. Admin creates `Subject "Physics"`, `Chapter` (scoped to that subject +
-   class), `Subtopic`.
+   class), `Topic` (under the chapter), `Subtopic` (under the topic).
 2. Admin creates the `Teacher` account → gets back a generated
    `temporaryPassword` (nothing is emailed/SMS'd; the admin relays it
    out-of-band).
@@ -384,8 +388,13 @@ green-field build; two calls diverge from it to fit *this* repo:
 ## Setup / environment
 
 - Schema is pushed with `npx prisma db push` (this repo doesn't use
-  `prisma migrate` — see `package.json`'s `db:push` script). Already applied;
-  the 11 new tables exist alongside the fees tables in the same database.
+  `prisma migrate` — see `package.json`'s `db:push` script). The 12 new tables
+  live alongside the fees tables in the same database. The `Topic` table and
+  the repointing of `Subtopic.chapterId` → `Subtopic.topicId` need a fresh
+  `db push`; because the old `chapterId` column is dropped and existing
+  subtopics have no topic to hang under, that push requires
+  `--accept-data-loss` and drops any pre-existing subtopic rows (recreate them
+  under topics afterwards).
 - **Set `TEACHER_AUTH_SECRET`** in production — a long random string,
   independent from `AUTH_SECRET` (e.g. `openssl rand -hex 32`). Without it,
   the module falls back to a derived secret and logs a warning, same pattern
@@ -410,7 +419,7 @@ green-field build; two calls diverge from it to fit *this* repo:
 ## File map
 
 ```
-prisma/schema.prisma                 # 11 new models, 6 new enums, appended
+prisma/schema.prisma                 # 12 new models, 6 new enums, appended
 src/proxy.ts                         # + teacher_session presence-check branch
 
 src/lib/auth/
@@ -427,6 +436,6 @@ src/lib/teaching/
   progress.ts                        # subtopic completion aggregation (TEACHING-only)
   pacing.ts                          # the pacing engine + its recompute triggers
 
-src/app/api/v1/admin/                # 32 route.ts files — see API reference above
+src/app/api/v1/admin/                # 34 route.ts files — see API reference above
 src/app/api/v1/teacher/              # 15 route.ts files — see API reference above
 ```

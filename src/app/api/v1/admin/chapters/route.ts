@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     include: {
       subject: { select: { id: true, name: true } },
       class: { select: { id: true, name: true } },
-      _count: { select: { subtopics: true } },
+      _count: { select: { topics: true } },
     },
   })
   return ok(chapters)

@@ -27,9 +27,20 @@ export async function recalculatePacingForAssignment(assignmentId: number): Prom
   const chapters = await prisma.chapter.findMany({
     where: { subjectId: assignment.subjectId, classId: schoolClass.id, isActive: true },
     orderBy: { displayOrder: 'asc' },
-    include: { subtopics: { where: { isActive: true }, select: { id: true } } },
+    include: {
+      topics: {
+        where: { isActive: true },
+        select: { subtopics: { where: { isActive: true }, select: { id: true } } },
+      },
+    },
   })
   if (chapters.length === 0) return
+
+  // Subtopics now live under topics; flatten each chapter's topics to the leaf
+  // subtopic ids the completion/pacing math still operates on.
+  const chapterSubtopicIds = new Map<number, number[]>(
+    chapters.map((c) => [c.id, c.topics.flatMap((t) => t.subtopics.map((s) => s.id))]),
+  )
 
   const events = await prisma.calendarEvent.findMany({
     where: { sessionId: session.id },
@@ -50,7 +61,7 @@ export async function recalculatePacingForAssignment(assignmentId: number): Prom
 
   const totalWorkingDays = countWorkingDays({ from: session.startDate, to: session.endDate, ...dayOpts })
 
-  const allSubtopicIds = chapters.flatMap((c) => c.subtopics.map((s) => s.id))
+  const allSubtopicIds = [...chapterSubtopicIds.values()].flat()
   const completionMap = await getSubtopicCompletionMap(assignmentId, allSubtopicIds)
 
   const totalWeight = chapters.reduce((sum, c) => sum + (c.periodsRequired ?? 1), 0) || chapters.length
@@ -64,7 +75,7 @@ export async function recalculatePacingForAssignment(assignmentId: number): Prom
     const expectedStartDate = new Date(cursor)
     const expectedEndDate = addWorkingDays(cursor, span, dayOpts)
 
-    const subtopicIds = chapter.subtopics.map((s) => s.id)
+    const subtopicIds = chapterSubtopicIds.get(chapter.id) ?? []
     const percent = chapterCompletionPercent(subtopicIds, completionMap)
 
     let status: PacingStatus

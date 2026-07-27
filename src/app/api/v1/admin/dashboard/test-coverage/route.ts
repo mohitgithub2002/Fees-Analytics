@@ -19,9 +19,14 @@ export async function GET(request: NextRequest) {
       subject: { select: { id: true, name: true } },
       class: { select: { id: true, name: true } },
       _count: { select: { topicDetails: { where: { sessionLog: { type: 'TEST' } } } } },
-      subtopics: {
+      topics: {
         where: { isActive: true },
-        select: { _count: { select: { topicDetails: { where: { sessionLog: { type: 'REVISION' } } } } } },
+        select: {
+          subtopics: {
+            where: { isActive: true },
+            select: { _count: { select: { topicDetails: { where: { sessionLog: { type: 'REVISION' } } } } } },
+          },
+        },
       },
     },
     orderBy: [{ subjectId: 'asc' }, { displayOrder: 'asc' }],
@@ -34,7 +39,10 @@ export async function GET(request: NextRequest) {
     subjectName: c.subject.name,
     className: c.class.name,
     testCount: c._count.topicDetails,
-    revisionCount: c.subtopics.reduce((sum, s) => sum + s._count.topicDetails, 0),
+    revisionCount: c.topics.reduce(
+      (sum, t) => sum + t.subtopics.reduce((s, st) => s + st._count.topicDetails, 0),
+      0,
+    ),
   }))
 
   return ok(coverage)

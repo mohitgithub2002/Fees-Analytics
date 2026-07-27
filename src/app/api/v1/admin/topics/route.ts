@@ -4,42 +4,46 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/teaching/guards'
 import { ok, err, readJson, parseId, handleError } from '@/lib/teaching/http'
 
-/** List subtopics for a topic. */
+/** List topics for a chapter. */
 export async function GET(request: NextRequest) {
   const gate = await requireAdmin()
   if ('error' in gate) return gate.error
 
   const sp = request.nextUrl.searchParams
-  const topicId = parseId(sp.get('topicId'))
-  if (!topicId) return err('topicId is required', 400)
+  const chapterId = parseId(sp.get('chapterId'))
+  if (!chapterId) return err('chapterId is required', 400)
 
   const activeParam = sp.get('active')
-  const where: Prisma.SubtopicWhereInput = { topicId }
+  const where: Prisma.TopicWhereInput = { chapterId }
   if (activeParam === 'false') where.isActive = false
   else if (activeParam !== 'all') where.isActive = true
 
-  const subtopics = await prisma.subtopic.findMany({ where, orderBy: { displayOrder: 'asc' } })
-  return ok(subtopics)
+  const topics = await prisma.topic.findMany({
+    where,
+    orderBy: { displayOrder: 'asc' },
+    include: { _count: { select: { subtopics: true } } },
+  })
+  return ok(topics)
 }
 
-/** Add a subtopic to a topic. */
+/** Add a topic to a chapter. */
 export async function POST(request: NextRequest) {
   const gate = await requireAdmin()
   if ('error' in gate) return gate.error
 
-  const body = await readJson<{ topicId?: number; name?: string; displayOrder?: number }>(request)
+  const body = await readJson<{ chapterId?: number; name?: string; displayOrder?: number }>(request)
   if (!body) return err('invalid JSON body')
 
-  const topicId = body.topicId
+  const chapterId = body.chapterId
   const name = body.name?.trim()
-  if (!topicId) return err('topicId is required')
+  if (!chapterId) return err('chapterId is required')
   if (!name) return err('name is required')
 
   try {
-    const subtopic = await prisma.subtopic.create({
-      data: { topicId, name, displayOrder: body.displayOrder ?? 0 },
+    const topic = await prisma.topic.create({
+      data: { chapterId, name, displayOrder: body.displayOrder ?? 0 },
     })
-    return ok(subtopic, 201)
+    return ok(topic, 201)
   } catch (e) {
     return handleError(e)
   }

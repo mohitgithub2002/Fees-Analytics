@@ -96,10 +96,12 @@ export async function POST(request: NextRequest) {
   const usesSubtopic = type === 'TEACHING' || type === 'REVISION'
   const chapters = await prisma.chapter.findMany({
     where: { subjectId: assignment.subjectId, classId: assignment.classroom.classId },
-    select: { id: true, subtopics: { select: { id: true } } },
+    select: { id: true, topics: { select: { subtopics: { select: { id: true } } } } },
   })
   const validChapterIds = new Set(chapters.map((c) => c.id))
-  const validSubtopicIds = new Set(chapters.flatMap((c) => c.subtopics.map((s) => s.id)))
+  const validSubtopicIds = new Set(
+    chapters.flatMap((c) => c.topics.flatMap((t) => t.subtopics.map((s) => s.id))),
+  )
 
   const topicsData: {
     subtopicId: number | null

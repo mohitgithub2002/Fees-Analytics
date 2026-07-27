@@ -4,7 +4,7 @@ import { requireTeacher } from '@/lib/teaching/guards'
 import { ok, err, parseId } from '@/lib/teaching/http'
 import { getSubtopicCompletionMap } from '@/lib/teaching/progress'
 
-/** Nested chapter and subtopic tree for one own assignment, annotated with current completion status. */
+/** Nested chapter → topic → subtopic tree for one own assignment, annotated with current completion status. */
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ assignmentId: string }> }) {
   const gate = await requireTeacher()
   if ('error' in gate) return gate.error
@@ -23,10 +23,16 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const chapters = await prisma.chapter.findMany({
     where: { subjectId: assignment.subjectId, classId: assignment.classroom.classId, isActive: true },
     orderBy: { displayOrder: 'asc' },
-    include: { subtopics: { where: { isActive: true }, orderBy: { displayOrder: 'asc' } } },
+    include: {
+      topics: {
+        where: { isActive: true },
+        orderBy: { displayOrder: 'asc' },
+        include: { subtopics: { where: { isActive: true }, orderBy: { displayOrder: 'asc' } } },
+      },
+    },
   })
 
-  const allSubtopicIds = chapters.flatMap((c) => c.subtopics.map((s) => s.id))
+  const allSubtopicIds = chapters.flatMap((c) => c.topics.flatMap((t) => t.subtopics.map((s) => s.id)))
   const statusMap = await getSubtopicCompletionMap(assignmentId, allSubtopicIds)
 
   const tree = chapters.map((c) => ({
@@ -34,11 +40,16 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     name: c.name,
     displayOrder: c.displayOrder,
     periodsRequired: c.periodsRequired,
-    subtopics: c.subtopics.map((s) => ({
-      id: s.id,
-      name: s.name,
-      displayOrder: s.displayOrder,
-      status: statusMap.get(s.id) ?? null,
+    topics: c.topics.map((t) => ({
+      id: t.id,
+      name: t.name,
+      displayOrder: t.displayOrder,
+      subtopics: t.subtopics.map((s) => ({
+        id: s.id,
+        name: s.name,
+        displayOrder: s.displayOrder,
+        status: statusMap.get(s.id) ?? null,
+      })),
     })),
   }))
 

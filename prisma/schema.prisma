@@ -454,7 +454,7 @@ model Chapter {
   subject Subject     @relation(fields: [subjectId], references: [id])
   class   SchoolClass @relation(fields: [classId], references: [id])
 
-  subtopics    Subtopic[]
+  topics       Topic[]
   pacing       SyllabusPacing[]
   topicDetails SessionTopicDetail[]
 
@@ -462,8 +462,9 @@ model Chapter {
   @@index([subjectId, classId])
 }
 
-// Subtopics inside a chapter — the level at which teaching completion is marked.
-model Subtopic {
+// Topics inside a chapter — the intermediate grouping between a chapter and
+// its subtopics. A chapter contains topics; each topic contains subtopics.
+model Topic {
   id           Int      @id @default(autoincrement())
   chapterId    Int
   name         String
@@ -472,10 +473,26 @@ model Subtopic {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  chapter      Chapter              @relation(fields: [chapterId], references: [id])
-  topicDetails SessionTopicDetail[]
+  chapter   Chapter    @relation(fields: [chapterId], references: [id])
+  subtopics Subtopic[]
 
   @@index([chapterId])
+}
+
+// Subtopics inside a topic — the level at which teaching completion is marked.
+model Subtopic {
+  id           Int      @id @default(autoincrement())
+  topicId      Int
+  name         String
+  displayOrder Int
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  topic        Topic                @relation(fields: [topicId], references: [id])
+  topicDetails SessionTopicDetail[]
+
+  @@index([topicId])
 }
 
 // Links a teacher to a classroom (which already encodes class + section +
