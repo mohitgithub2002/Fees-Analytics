@@ -41,7 +41,7 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
   )
 }
 
-export async function signToken(payload: TokenPayload, secret: string): Promise<string> {
+export async function signToken<T extends { exp: number }>(payload: T, secret: string): Promise<string> {
   const body = bytesToB64url(encoder.encode(JSON.stringify(payload)))
   const key = await hmacKey(secret)
   const sig = new Uint8Array(
@@ -51,7 +51,10 @@ export async function signToken(payload: TokenPayload, secret: string): Promise<
 }
 
 /** Verify signature and expiry; returns the payload or null. */
-export async function verifyToken(token: string, secret: string): Promise<TokenPayload | null> {
+export async function verifyToken<T extends { exp: number } = TokenPayload>(
+  token: string,
+  secret: string,
+): Promise<T | null> {
   const dot = token.indexOf('.')
   if (dot <= 0) return null
   const body = token.slice(0, dot)
@@ -75,10 +78,10 @@ export async function verifyToken(token: string, secret: string): Promise<TokenP
 
   try {
     const json = new TextDecoder().decode(b64urlToBytes(body))
-    const payload = JSON.parse(json) as TokenPayload
+    const payload = JSON.parse(json) as T & { sub?: unknown }
     if (typeof payload.exp !== 'number' || Date.now() > payload.exp) return null
     if (typeof payload.sub !== 'number') return null
-    return payload
+    return payload as T
   } catch {
     return null
   }
