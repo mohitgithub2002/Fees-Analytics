@@ -5,6 +5,7 @@ import { requireTeacher } from '@/lib/teaching/guards'
 import { ok, err, readJson, parseId, handleError, isSameCalendarDay } from '@/lib/teaching/http'
 import { writeAudit } from '@/lib/teaching/audit'
 import { recalculatePacingForAssignment } from '@/lib/teaching/pacing'
+import { affectsPacing } from '@/lib/teaching/session-types'
 
 /** Update a topic's status, typically PARTIAL to COMPLETE. */
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string; tid: string }> }) {
@@ -49,7 +50,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       })
       return result
     })
-    if (topic.sessionLog.type === 'TEACHING') await recalculatePacingForAssignment(topic.sessionLog.assignmentId)
+    if (affectsPacing(topic.sessionLog.type)) await recalculatePacingForAssignment(topic.sessionLog.assignmentId)
     return ok(updated)
   } catch (e) {
     return handleError(e)
@@ -89,7 +90,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
         oldValue: topic,
       })
     })
-    if (topic.sessionLog.type === 'TEACHING') await recalculatePacingForAssignment(topic.sessionLog.assignmentId)
+    if (affectsPacing(topic.sessionLog.type)) await recalculatePacingForAssignment(topic.sessionLog.assignmentId)
     return ok({ deleted: true })
   } catch (e) {
     return handleError(e)

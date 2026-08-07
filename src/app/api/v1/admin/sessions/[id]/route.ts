@@ -19,6 +19,7 @@ const SESSION_INCLUDE = {
       chapter: { select: { id: true, name: true } },
     },
   },
+  homeworkCheck: true, // null on every type but HOMEWORK, and on unchecked homework
 } as const
 
 /** Full detail of one session including all covered topics. */

@@ -2,14 +2,14 @@ import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/teaching/guards'
 import { ok } from '@/lib/teaching/http'
 
-/** Summary of assignments, today's periods and overall progress. */
+/** Summary of assignments, today's periods, overall progress and homework still to check. */
 export async function GET() {
   const gate = await requireTeacher()
   if ('error' in gate) return gate.error
 
   const dayOfWeek = new Date().getDay()
 
-  const [assignmentCount, todaySlots, pacingRows] = await Promise.all([
+  const [assignmentCount, todaySlots, pacingRows, homeworkToCheck] = await Promise.all([
     prisma.teacherAssignment.count({ where: { teacherId: gate.teacher.id, isActive: true } }),
     dayOfWeek === 0
       ? Promise.resolve([])
@@ -26,6 +26,13 @@ export async function GET() {
       where: { assignment: { teacherId: gate.teacher.id, isActive: true } },
       select: { status: true, completionPercent: true },
     }),
+    prisma.sessionLog.count({
+      where: {
+        type: 'HOMEWORK',
+        homeworkCheck: { is: null },
+        assignment: { teacherId: gate.teacher.id, isActive: true },
+      },
+    }),
   ])
 
   const overallCompletionPercent = pacingRows.length
@@ -34,5 +41,5 @@ export async function GET() {
   const pacingBreakdown = { ON_TRACK: 0, BEHIND: 0, AHEAD: 0, COMPLETED: 0 }
   for (const row of pacingRows) pacingBreakdown[row.status]++
 
-  return ok({ assignmentCount, todaySlots, overallCompletionPercent, pacingBreakdown })
+  return ok({ assignmentCount, todaySlots, overallCompletionPercent, pacingBreakdown, homeworkToCheck })
 }

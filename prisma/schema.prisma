@@ -369,6 +369,7 @@ enum SessionType {
   REVISION
   QA
   TEST
+  HOMEWORK
 }
 
 enum TopicStatus {
@@ -417,8 +418,9 @@ model Teacher {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  assignments TeacherAssignment[]
-  attendance  TeacherAttendance[]
+  assignments    TeacherAssignment[]
+  attendance     TeacherAttendance[]
+  homeworkChecks HomeworkCheck[]
 
   @@index([employeeId])
   @@index([phone])
@@ -559,10 +561,13 @@ model CalendarEvent {
   @@index([startDate, endDate])
 }
 
-// A logged teaching, revision, Q&A or test session — the header. No timetable
-// foreign key: a teacher who arrived late, swapped periods, or covered an
-// absent colleague's class must still be able to record what they actually
-// taught. Timetable stays a planning artefact; logging stays free-form.
+// A logged teaching, revision, Q&A, test or homework session — the header. No
+// timetable foreign key: a teacher who arrived late, swapped periods, or
+// covered an absent colleague's class must still be able to record what they
+// actually taught. Timetable stays a planning artefact; logging stays free-form.
+//
+// HOMEWORK rows are "homework set on this date, covering these subtopics".
+// Whether that homework was later checked lives in HomeworkCheck, not here.
 model SessionLog {
   id           Int         @id @default(autoincrement())
   assignmentId Int
@@ -572,8 +577,9 @@ model SessionLog {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  assignment TeacherAssignment    @relation(fields: [assignmentId], references: [id])
-  topics     SessionTopicDetail[]
+  assignment    TeacherAssignment    @relation(fields: [assignmentId], references: [id])
+  topics        SessionTopicDetail[]
+  homeworkCheck HomeworkCheck?
 
   @@index([assignmentId])
   @@index([sessionDate])
@@ -598,6 +604,32 @@ model SessionTopicDetail {
   @@index([sessionLogId])
   @@index([subtopicId])
   @@index([chapterId])
+}
+
+// Records that a HOMEWORK SessionLog's work was actually checked. The row's
+// absence is what "not checked yet" means, so there is no boolean flag to keep
+// in sync and no ambiguity about a NULL date.
+//
+// Homework is set on one day and checked on a later one, so three separate
+// times are kept: `sessionLog.sessionDate` (the day the homework was set),
+// `checkedOn` (the calendar day the teacher actually went through the copies —
+// which they choose, since they may record it a day late) and `checkedAt` (the
+// server timestamp the record was written, which they cannot choose).
+model HomeworkCheck {
+  id                 Int      @id @default(autoincrement())
+  sessionLogId       Int      @unique
+  checkedByTeacherId Int
+  checkedOn          DateTime @db.Date
+  checkedAt          DateTime @default(now())
+  remarks            String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  sessionLog SessionLog @relation(fields: [sessionLogId], references: [id], onDelete: Cascade)
+  checkedBy  Teacher    @relation(fields: [checkedByTeacherId], references: [id])
+
+  @@index([checkedOn])
+  @@index([checkedByTeacherId])
 }
 
 // Derived pacing data — never written by a human, always recomputed. One row

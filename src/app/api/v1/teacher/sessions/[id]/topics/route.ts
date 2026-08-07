@@ -4,6 +4,7 @@ import { requireTeacher } from '@/lib/teaching/guards'
 import { ok, err, readJson, parseId, handleError } from '@/lib/teaching/http'
 import { writeAudit } from '@/lib/teaching/audit'
 import { recalculatePacingForAssignment } from '@/lib/teaching/pacing'
+import { usesSubtopicGranularity, affectsPacing } from '@/lib/teaching/session-types'
 
 interface TopicInput {
   subtopicId?: number
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const body = await readJson<{ topics?: TopicInput[] }>(request)
   if (!body || !Array.isArray(body.topics) || body.topics.length === 0) return err('at least one topic is required')
 
-  const usesSubtopic = session.type === 'TEACHING' || session.type === 'REVISION'
+  const usesSubtopic = usesSubtopicGranularity(session.type)
   const chapters = await prisma.chapter.findMany({
     where: { subjectId: session.assignment.subjectId, classId: session.assignment.classroom.classId },
     select: { id: true, topics: { select: { subtopics: { select: { id: true } } } } },
@@ -77,7 +78,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       })
       return rows
     })
-    if (usesSubtopic) await recalculatePacingForAssignment(session.assignmentId)
+    if (affectsPacing(session.type)) await recalculatePacingForAssignment(session.assignmentId)
     return ok(topics, 201)
   } catch (e) {
     return handleError(e)

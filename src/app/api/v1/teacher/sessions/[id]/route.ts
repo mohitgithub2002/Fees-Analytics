@@ -18,6 +18,7 @@ const SESSION_INCLUDE = {
       chapter: { select: { id: true, name: true } },
     },
   },
+  homeworkCheck: true, // null on every type but HOMEWORK, and on unchecked homework
 } as const
 
 /** One own session with its topic detail rows. */

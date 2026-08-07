@@ -3,9 +3,10 @@ import type { TopicStatus } from '@/generated/prisma/enums'
 
 /**
  * Completion aggregation. Only TEACHING-type SessionTopicDetail rows count
- * toward syllabus completion — REVISION rows are recorded so revision
- * coverage can be reported on independently, but they don't move the
- * "has this been taught" needle (see AGENTS docs, Section 2.4).
+ * toward syllabus completion — REVISION and HOMEWORK rows are recorded so
+ * revision and homework coverage can be reported on independently, but they
+ * don't move the "has this been taught" needle (see AGENTS docs, Section 2.4).
+ * `affectsPacing()` in ./session-types.ts encodes the same rule for callers.
  */
 
 /** Latest TEACHING status per subtopic, for one assignment. */

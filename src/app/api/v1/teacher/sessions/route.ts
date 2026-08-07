@@ -5,9 +5,7 @@ import { requireTeacher } from '@/lib/teaching/guards'
 import { ok, err, readJson, handleError, parseId, parsePagination, paginationMeta } from '@/lib/teaching/http'
 import { writeAudit } from '@/lib/teaching/audit'
 import { recalculatePacingForAssignment } from '@/lib/teaching/pacing'
-
-const SESSION_TYPES = ['TEACHING', 'REVISION', 'QA', 'TEST'] as const
-type SessionTypeInput = (typeof SESSION_TYPES)[number]
+import { SESSION_TYPES, isSessionType, usesSubtopicGranularity, affectsPacing } from '@/lib/teaching/session-types'
 
 interface TopicInput {
   subtopicId?: number
@@ -52,6 +50,7 @@ export async function GET(request: NextRequest) {
             classroom: { include: { class: { select: { id: true, name: true } } } },
           },
         },
+        homeworkCheck: true,
         _count: { select: { topics: true } },
       },
     }),
@@ -79,9 +78,7 @@ export async function POST(request: NextRequest) {
   const { assignmentId, sessionDate, notes, type } = body
   if (!assignmentId) return err('assignmentId is required')
   if (!sessionDate || isNaN(Date.parse(sessionDate))) return err('a valid sessionDate is required')
-  if (!type || !SESSION_TYPES.includes(type as SessionTypeInput)) {
-    return err('type must be one of TEACHING, REVISION, QA, TEST')
-  }
+  if (!isSessionType(type)) return err(`type must be one of ${SESSION_TYPES.join(', ')}`)
   if (!Array.isArray(body.topics) || body.topics.length === 0) return err('at least one topic is required')
 
   // Ownership — the assignment must belong to THIS teacher. Filtering by
@@ -93,7 +90,7 @@ export async function POST(request: NextRequest) {
   })
   if (!assignment) return err('assignment not found', 404)
 
-  const usesSubtopic = type === 'TEACHING' || type === 'REVISION'
+  const usesSubtopic = usesSubtopicGranularity(type)
   const chapters = await prisma.chapter.findMany({
     where: { subjectId: assignment.subjectId, classId: assignment.classroom.classId },
     select: { id: true, topics: { select: { subtopics: { select: { id: true } } } } },
@@ -130,7 +127,7 @@ export async function POST(request: NextRequest) {
         data: {
           assignmentId,
           sessionDate: new Date(sessionDate),
-          type: type as Prisma.SessionLogCreateInput['type'],
+          type,
           notes: notes?.trim() || null,
           topics: { create: topicsData },
         },
@@ -147,7 +144,7 @@ export async function POST(request: NextRequest) {
       })
       return created
     })
-    if (usesSubtopic) await recalculatePacingForAssignment(assignmentId)
+    if (affectsPacing(type)) await recalculatePacingForAssignment(assignmentId)
     return ok(log, 201)
   } catch (e) {
     return handleError(e)

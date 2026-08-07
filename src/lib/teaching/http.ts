@@ -45,6 +45,30 @@ export function isSameCalendarDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
 }
 
+/**
+ * Today as a UTC-midnight Date — the shape Prisma hands back for `@db.Date`
+ * columns, so it compares directly against `sessionDate` / `checkedOn`. The
+ * day is taken from the server's *local* calendar (a school logging at 1am IST
+ * means that day, not the UTC one still in yesterday).
+ */
+export function todayDateOnly(): Date {
+  const now = new Date()
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+}
+
+/** Parse a `YYYY-MM-DD` (or ISO) string to a UTC-midnight Date; null if unparseable. */
+export function parseDateOnly(raw: string): Date | null {
+  const ms = Date.parse(raw)
+  if (isNaN(ms)) return null
+  const d = new Date(ms)
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+}
+
+/** Whole days from `from` to `to`, both being date-only values. Negative if `to` precedes `from`. */
+export function daysBetween(from: Date, to: Date): number {
+  return Math.round((to.getTime() - from.getTime()) / 86_400_000)
+}
+
 /** Map Prisma errors to consistent JSON error responses. */
 export function handleError(e: unknown) {
   if (e instanceof Prisma.PrismaClientKnownRequestError) {

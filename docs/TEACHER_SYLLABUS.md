@@ -63,7 +63,8 @@ Subject ──┴─────────────────────
           ├── teacher: Teacher
           ├── TimetableSlot (weekly grid — reference only, never a FK on SessionLog)
           ├── SessionLog (header: date, type)
-          │      └── SessionTopicDetail (body: which subtopic/chapter, status)
+          │      ├── SessionTopicDetail (body: which subtopic/chapter, status)
+          │      └── HomeworkCheck (0..1 — only on HOMEWORK rows; absent = not checked yet)
           └── SyllabusPacing (one row per (assignment, chapter) — derived, never hand-written)
 
 TeacherAttendance (teacher × date)
@@ -87,8 +88,9 @@ here can accidentally join across the fees/teaching boundary.
 | `TeacherAssignment` | `teacherId`, `classroomId`, `subjectId` | `@@unique([teacherId, classroomId, subjectId])`. Classroom already encodes class+section+session, so no separate year column is needed and it can't drift |
 | `TimetableSlot` | `assignmentId`, `dayOfWeek` (1=Mon..6=Sat), `periodNumber`, `startTime`, `endTime` | `@@unique([assignmentId, dayOfWeek, periodNumber])`; clash-checked against the same teacher/classroom on create |
 | `CalendarEvent` | `sessionId`, `type` (`HOLIDAY`\|`EXAM`\|`EVENT`), `startDate`, `endDate` | feeds working-day counting |
-| `SessionLog` | `assignmentId`, `sessionDate` (`@db.Date`), `type` (`TEACHING`\|`REVISION`\|`QA`\|`TEST`), `notes?` | **no timetable FK** — a teacher who arrived late, swapped periods, or covered another class must still be able to log it |
-| `SessionTopicDetail` | `sessionLogId`, `subtopicId?`, `chapterId?`, `status` (`PARTIAL`\|`COMPLETE`) | `TEACHING`/`REVISION` rows use `subtopicId`; `QA`/`TEST` rows use `chapterId` (coarser — a test spans a chapter, not one subtopic) |
+| `SessionLog` | `assignmentId`, `sessionDate` (`@db.Date`), `type` (`TEACHING`\|`REVISION`\|`QA`\|`TEST`\|`HOMEWORK`), `notes?` | **no timetable FK** — a teacher who arrived late, swapped periods, or covered another class must still be able to log it |
+| `SessionTopicDetail` | `sessionLogId`, `subtopicId?`, `chapterId?`, `status` (`PARTIAL`\|`COMPLETE`) | `TEACHING`/`REVISION`/`HOMEWORK` rows use `subtopicId`; `QA`/`TEST` rows use `chapterId` (coarser — a test spans a chapter, not one subtopic) |
+| `HomeworkCheck` | `sessionLogId` (unique), `checkedByTeacherId`, `checkedOn` (`@db.Date`), `checkedAt`, `remarks?` | 0..1 per `HOMEWORK` `SessionLog`; **absence is what "not checked yet" means** — see the homework section below |
 | `SyllabusPacing` | `assignmentId`, `chapterId`, `expectedStartDate`, `expectedEndDate`, `status`, `daysBehind`, `completionPercent` | `@@unique([assignmentId, chapterId])`. Recomputed, never hand-edited |
 | `TeacherAttendance` | `teacherId`, `date` (`@db.Date`), `status` (`PRESENT`\|`ABSENT`\|`HALF_DAY`\|`ON_LEAVE`) | `@@unique([teacherId, date])`; `ABSENT` days are excluded from pacing's working-day count |
 | `TeachingAuditLog` | `actorType` (`ADMIN`\|`TEACHER`), `actorId`, `actorName`, `action`, `entityType`, `entityId?`, `oldValue?`, `newValue?` (Json) | `actorName` is a denormalised snapshot — the log stays readable even after the account is deleted |
@@ -180,9 +182,12 @@ now?**
    `SessionTopicDetail` row logged
    against **this assignment** with `sessionLog.type === 'TEACHING'` gives its
    status. `completionPercent = complete subtopics / total subtopics × 100`.
-   (Deliberately `TEACHING`-only — `REVISION` rows are tracked so revision
-   coverage can be reported on independently, but don't move the "has this
-   been taught" needle.)
+   (Deliberately `TEACHING`-only — `REVISION` and `HOMEWORK` rows are tracked
+   so revision and homework coverage can be reported on independently, but
+   don't move the "has this been taught" needle. `affectsPacing()` in
+   `src/lib/teaching/session-types.ts` is the single place that decides this,
+   so a write of any other type skips the recompute entirely rather than
+   burning a query on a guaranteed no-op.)
 4. **Status** — `COMPLETED` at 100%; `BEHIND` if today is past
    `expectedEndDate` and not complete; otherwise `ON_TRACK` vs `AHEAD` by
    comparing actual completion to the percent-of-window-elapsed.
@@ -234,6 +239,45 @@ against the server's local date). Teachers **cannot delete a session at
 all** — only an admin can (`DELETE /api/v1/admin/sessions/[id]`), and that
 deletion is itself audited. This keeps the log honest: a same-day typo is
 fixable immediately, but a teacher can't quietly erase history days later.
+
+## Homework: setting it, then checking it
+
+Homework is a fifth `SessionType`, not a parallel feature. A teacher sets it
+the same way they log a lesson — `POST /teacher/sessions` with
+`type: "HOMEWORK"` and the same chapter → topic → subtopic picker
+(`GET /teacher/syllabus/[assignmentId]`) the lesson was logged from. There is
+therefore exactly one write path into `SessionLog`, one ownership check, one
+audit shape, and one place where subtopic ids are validated against the
+assignment's own syllabus.
+
+Whether that homework was later **checked** lives in a separate
+`HomeworkCheck` row, keyed one-to-one on the homework's `SessionLog`:
+
+- **Absence is the state.** No row means not checked. There is no boolean to
+  drift out of step with a nullable date, and no "checked = true but
+  checkedAt = null" to defend against in every reader.
+- **Three distinct times, because they genuinely differ.** Homework set on
+  Monday is checked on Tuesday or Wednesday: `sessionLog.sessionDate` is the
+  day it was *set*, `checkedOn` is the day the teacher says they *checked* it,
+  and `checkedAt` is the server timestamp the record was *written*. The
+  teacher chooses the first two; `checkedAt` is stamped server-side and can't
+  be back-dated, so an admin comparing `checkedOn` against `checkedAt` can see
+  a claim entered three days after the fact.
+- **`checkedOn` is bounded**, not free text: it must parse, must not be in the
+  future, and must not precede the day the homework was set.
+- **Corrections follow the module's same-day rule.** `PATCH` and `DELETE` on
+  the check are allowed only on the calendar day the check was *recorded*
+  (`createdAt`, not `checkedOn`) — a mis-click is fixable now, last week's
+  record isn't quietly rewritable. Both are audited (`HOMEWORK_CHECK_UPDATED`
+  / `HOMEWORK_CHECK_REMOVED`), as is the original mark (`HOMEWORK_CHECKED`).
+- **Homework never moves pacing.** Setting homework on a subtopic is not
+  evidence it was taught; only `TEACHING` rows feed `completionPercent`.
+
+`daysPending` is returned alongside each row so the client never has to do
+date math: days from set → check for checked homework, days from set → today
+for the rest. `GET /admin/dashboard/homework` rolls that up per teacher into
+assigned / checked / overdue counts and an average check delay, with `overdue`
+meaning still unchecked more than `graceDays` (default 2) after being set.
 
 ## API reference
 
@@ -300,6 +344,8 @@ authenticated admin. 🟢 = authenticated teacher. 🟡 = public.
 | GET | `/admin/dashboard/unmarked` (`?classId&subjectId`) | Subtopics never taught **anywhere** |
 | GET | `/admin/dashboard/activity` | Last logged session per teacher, staleest first — surfaces inactive teachers |
 | GET | `/admin/dashboard/test-coverage` (`?subjectId`) | Test/revision frequency per chapter |
+| GET | `/admin/homework` (`?teacherId&classroomId&subjectId&checked&from&to`) | All homework with its check state and `daysPending`, paginated |
+| GET | `/admin/dashboard/homework` (`?sessionId&teacherId&graceDays`) | Per-teacher check compliance: assigned / checked / overdue / avg delay, worst first |
 
 ### Teacher — auth
 
@@ -319,21 +365,30 @@ authenticated admin. 🟢 = authenticated teacher. 🟡 = public.
 | GET | `/teacher/schedule/today` | Today's periods (empty array on Sunday) |
 | GET | `/teacher/syllabus/[assignmentId]` | Chapter→topic→subtopic tree annotated with own completion status |
 | GET | `/teacher/pacing` | Own pacing status by chapter |
-| GET | `/teacher/dashboard/overview` | Assignment count, today's periods, own completion + pacing breakdown |
+| GET | `/teacher/dashboard/overview` | Assignment count, today's periods, own completion + pacing breakdown, `homeworkToCheck` count |
 | GET | `/teacher/dashboard/pending` | Subtopics still unmarked, per own assignment |
 
 ### Teacher — session logging (the write path)
 
 | Method | Route | Purpose |
 |---|---|---|
-| GET / POST | `/teacher/sessions` (`?assignmentId&type&from&to`) | Own history, paginated / log a session (header + topics, one transaction) |
-| GET | `/teacher/sessions/[id]` | One own session with topics |
+| GET / POST | `/teacher/sessions` (`?assignmentId&type&from&to`) | Own history, paginated / log a session (header + topics, one transaction). `type: "HOMEWORK"` is how homework is set |
+| GET | `/teacher/sessions/[id]` | One own session with topics (+ `homeworkCheck`) |
 | PATCH | `/teacher/sessions/[id]` | Edit notes/date — **same day only** |
 | POST | `/teacher/sessions/[id]/topics` | Append topic rows |
 | PATCH | `/teacher/sessions/[id]/topics/[tid]` | Update status (`PARTIAL`→`COMPLETE`) |
 | DELETE | `/teacher/sessions/[id]/topics/[tid]` | Remove a row — **same day only** |
 
-49 routes total (34 admin + 15 teacher).
+### Teacher — homework checking
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET | `/teacher/homework` (`?assignmentId&checked&from&to`) | Own homework with subtopics + check state; `?checked=false` is the to-check queue (oldest first) and always returns `uncheckedCount` |
+| POST | `/teacher/homework/[id]/check` | Mark checked: `{ checkedOn?, remarks? }` — `checkedOn` defaults to today, `409` if already checked |
+| PATCH | `/teacher/homework/[id]/check` | Correct `checkedOn`/`remarks` — **same day as recorded only** |
+| DELETE | `/teacher/homework/[id]/check` | Undo the mark — **same day as recorded only** |
+
+53 routes total (36 admin + 17 teacher).
 
 ## Request lifecycle, worked example
 
@@ -388,8 +443,11 @@ green-field build; two calls diverge from it to fit *this* repo:
 ## Setup / environment
 
 - Schema is pushed with `npx prisma db push` (this repo doesn't use
-  `prisma migrate` — see `package.json`'s `db:push` script). The 12 new tables
-  live alongside the fees tables in the same database. The `Topic` table and
+  `prisma migrate` — see `package.json`'s `db:push` script). The 13 new tables
+  live alongside the fees tables in the same database. The `HomeworkCheck`
+  table and the `HOMEWORK` value on the `SessionType` enum are purely
+  additive — that push needs no `--accept-data-loss` and touches no existing
+  row. The `Topic` table and
   the repointing of `Subtopic.chapterId` → `Subtopic.topicId` need a fresh
   `db push`; because the old `chapterId` column is dropped and existing
   subtopics have no topic to hang under, that push requires
@@ -419,7 +477,7 @@ green-field build; two calls diverge from it to fit *this* repo:
 ## File map
 
 ```
-prisma/schema.prisma                 # 12 new models, 6 new enums, appended
+prisma/schema.prisma                 # 13 new models, 6 new enums, appended
 src/proxy.ts                         # + teacher_session presence-check branch
 
 src/lib/auth/
@@ -429,13 +487,14 @@ src/lib/auth/
   teacher.ts                         # NEW — teacher session helpers (DB-checked)
 
 src/lib/teaching/
-  http.ts                            # ok/err/readJson/parseId/pagination/isSameCalendarDay/handleError
+  http.ts                            # ok/err/readJson/parseId/pagination/date helpers/handleError
   guards.ts                          # requireAdmin() / requireTeacher()
+  session-types.ts                   # SESSION_TYPES + usesSubtopicGranularity()/affectsPacing()
   audit.ts                           # writeAudit() — always inside the write's transaction
   working-days.ts                    # countWorkingDays() / addWorkingDays() — UTC-safe
   progress.ts                        # subtopic completion aggregation (TEACHING-only)
   pacing.ts                          # the pacing engine + its recompute triggers
 
-src/app/api/v1/admin/                # 34 route.ts files — see API reference above
-src/app/api/v1/teacher/              # 15 route.ts files — see API reference above
+src/app/api/v1/admin/                # 36 route.ts files — see API reference above
+src/app/api/v1/teacher/              # 17 route.ts files — see API reference above
 ```
