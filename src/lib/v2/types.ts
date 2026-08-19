@@ -180,6 +180,14 @@ export interface FeeStructureV2 {
     name: string
     amount: number
     installmentCount: number
+    /** Optional per-installment due dates. Empty = undated installments. */
+    schedule?: {
+      id: number
+      sequence: number
+      label: string | null
+      dueDate: string
+      amount: number | null
+    }[]
   }[]
 }
 

@@ -6,11 +6,58 @@ import { $Enums } from '@/generated/prisma/client'
 
 const CATEGORIES = new Set(Object.values($Enums.FeeCategory))
 
+interface ScheduleInput {
+  sequence?: number
+  label?: string | null
+  dueDate?: string
+  amount?: number | null
+}
+
 interface StructureItemInput {
   category?: $Enums.FeeCategory
   name?: string
   amount?: number
   installmentCount?: number
+  /** Optional due-date schedule, one row per installment. */
+  schedule?: ScheduleInput[]
+}
+
+/**
+ * A schedule is all-or-nothing: it must cover every installment exactly once,
+ * because a partial schedule would leave some installments undated and make
+ * "paid on time" unanswerable for them.
+ */
+function validateSchedule(item: StructureItemInput, count: number): string | null {
+  const schedule = item.schedule
+  if (schedule === undefined || schedule.length === 0) return null
+  if (schedule.length !== count) {
+    return `"${item.name}": schedule must have exactly ${count} rows (one per installment)`
+  }
+  const seen = new Set<number>()
+  for (const row of schedule) {
+    if (!Number.isInteger(row.sequence) || row.sequence! < 1 || row.sequence! > count) {
+      return `"${item.name}": each schedule row needs a sequence between 1 and ${count}`
+    }
+    if (seen.has(row.sequence!)) return `"${item.name}": duplicate schedule sequence ${row.sequence}`
+    seen.add(row.sequence!)
+    if (!row.dueDate || isNaN(Date.parse(row.dueDate))) {
+      return `"${item.name}": schedule row ${row.sequence} needs a valid dueDate`
+    }
+    if (row.amount !== undefined && row.amount !== null && !isPositiveAmount(row.amount)) {
+      return `"${item.name}": schedule row ${row.sequence} amount must be positive`
+    }
+  }
+  const withAmount = schedule.filter((r) => r.amount !== undefined && r.amount !== null)
+  if (withAmount.length > 0 && withAmount.length !== schedule.length) {
+    return `"${item.name}": set an amount on every schedule row or on none`
+  }
+  if (withAmount.length === schedule.length) {
+    const total = withAmount.reduce((sum, r) => sum + r.amount!, 0)
+    if (Math.round(total * 100) !== Math.round(item.amount! * 100)) {
+      return `"${item.name}": schedule amounts (${total}) must sum to the item amount (${item.amount})`
+    }
+  }
+  return null
 }
 
 function validateItems(items: unknown): string | StructureItemInput[] {
@@ -30,6 +77,8 @@ function validateItems(items: unknown): string | StructureItemInput[] {
     ) {
       return 'installmentCount must be a positive integer'
     }
+    const scheduleError = validateSchedule(item, item.installmentCount ?? 1)
+    if (scheduleError) return scheduleError
     const key = item.name.trim().toLowerCase()
     if (names.has(key)) return `duplicate item name: ${item.name}`
     names.add(key)
@@ -50,7 +99,10 @@ export async function GET(request: NextRequest) {
         include: {
           class: true,
           session: { select: { id: true, name: true, isCurrent: true } },
-          items: { orderBy: { id: 'asc' } },
+          items: {
+            orderBy: { id: 'asc' },
+            include: { schedule: { orderBy: { sequence: 'asc' } } },
+          },
         },
         orderBy: [{ sessionId: 'desc' }, { class: { displayOrder: 'asc' } }],
       }),
@@ -85,19 +137,39 @@ export async function POST(request: NextRequest) {
         create: { sessionId: sessionId!, classId: classId! },
         update: {},
       })
+      // Items are replaced wholesale; the schedule cascades with them, so it
+      // is created per item rather than in one createMany.
       await tx.feeStructureItem.deleteMany({ where: { feeStructureId: created.id } })
-      await tx.feeStructureItem.createMany({
-        data: validated.map((item) => ({
-          feeStructureId: created.id,
-          category: item.category!,
-          name: item.name!.trim(),
-          amount: item.amount!,
-          installmentCount: item.installmentCount ?? 1,
-        })),
-      })
+      for (const item of validated) {
+        await tx.feeStructureItem.create({
+          data: {
+            feeStructureId: created.id,
+            category: item.category!,
+            name: item.name!.trim(),
+            amount: item.amount!,
+            installmentCount: item.installmentCount ?? 1,
+            ...(item.schedule?.length
+              ? {
+                  schedule: {
+                    create: item.schedule.map((row) => ({
+                      sequence: row.sequence!,
+                      label: row.label?.trim() || null,
+                      dueDate: new Date(row.dueDate!),
+                      amount: row.amount ?? null,
+                    })),
+                  },
+                }
+              : {}),
+          },
+        })
+      }
       return tx.feeStructure.findUniqueOrThrow({
         where: { id: created.id },
-        include: { class: true, session: { select: { id: true, name: true } }, items: true },
+        include: {
+          class: true,
+          session: { select: { id: true, name: true } },
+          items: { include: { schedule: { orderBy: { sequence: 'asc' } } } },
+        },
       })
     })
     invalidateTags(TAGS.structures, TAGS.classes)

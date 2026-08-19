@@ -5,7 +5,7 @@ import {
   InstallmentPlanInput,
   statusFor,
 } from './installments'
-import { toPaise, toRupees } from './money'
+import { splitAmount, toPaise, toRupees } from './money'
 
 type FeeCategory = $Enums.FeeCategory
 
@@ -216,10 +216,72 @@ export async function deleteFeeItem(tx: Prisma.TransactionClient, feeItemId: num
   await tx.studentFeeItem.delete({ where: { id: feeItemId } })
 }
 
+type StructureScheduleRow = {
+  sequence: number
+  label: string | null
+  dueDate: Date
+  amount: Prisma.Decimal | null
+}
+
+/**
+ * Turn a structure item's due-date schedule into an explicit installment plan.
+ *
+ * A schedule row may leave `amount` null, meaning "an even share of the fee" —
+ * so the amounts are split evenly first and the schedule only supplies labels
+ * and due dates. Rows with explicit amounts are honoured, and any rounding
+ * remainder lands on the last installment so the plan always sums to `amount`
+ * (which `buildInstallments` enforces anyway).
+ *
+ * Returns the bare installment count when the schedule is empty or does not
+ * cover every installment, keeping the pre-recovery behaviour intact.
+ */
+export function scheduleToPlan(
+  amount: number,
+  installmentCount: number,
+  schedule: StructureScheduleRow[]
+): number | InstallmentPlanInput[] {
+  if (schedule.length === 0) return installmentCount
+
+  const ordered = [...schedule].sort((a, b) => a.sequence - b.sequence)
+  // A partial schedule would silently drop installments — fall back instead.
+  if (ordered.length !== installmentCount) return installmentCount
+
+  const explicit = ordered.filter((r) => r.amount !== null)
+  if (explicit.length === 0) {
+    const even = splitAmount(amount, installmentCount)
+    return ordered.map((row, i) => ({
+      amount: even[i],
+      label: row.label ?? undefined,
+      dueDate: row.dueDate,
+    }))
+  }
+  if (explicit.length !== ordered.length) {
+    throw new FeeItemError(
+      'fee structure schedule must set an amount on every installment or on none'
+    )
+  }
+
+  const amounts = ordered.map((r) => toPaise(r.amount!))
+  const drift = toPaise(amount) - amounts.reduce((sum, a) => sum + a, 0)
+  amounts[amounts.length - 1] += drift
+
+  return ordered.map((row, i) => ({
+    amount: toRupees(amounts[i]),
+    label: row.label ?? undefined,
+    dueDate: row.dueDate,
+  }))
+}
+
 /**
  * Copy the class-wise fee structure (for the enrollment's session + class)
  * onto an enrollment. Items whose name is already assigned are skipped, so
  * the call is idempotent and manual additions survive.
+ *
+ * Where a structure item carries a due-date schedule, it is copied onto the
+ * student's installments. Without due dates the recovery module cannot tell an
+ * installment that is late from one that is not yet owed, so a structure with
+ * no schedule produces undated installments exactly as before — analysis of
+ * those simply falls back to session-relative timing.
  */
 export async function applyStructureToEnrollment(
   tx: Prisma.TransactionClient,
@@ -238,7 +300,7 @@ export async function applyStructureToEnrollment(
         classId: enrollment.classroom.classId,
       },
     },
-    include: { items: true },
+    include: { items: { include: { schedule: true } } },
   })
   if (!structure) {
     throw new FeeItemError('no fee structure defined for this class and session', 404)
@@ -248,13 +310,14 @@ export async function applyStructureToEnrollment(
   const created = []
   for (const item of structure.items) {
     if (existingNames.has(item.name)) continue
+    const amount = Number(item.amount)
     created.push(
       await createFeeItem(tx, {
         enrollmentId,
         category: item.category,
         name: item.name,
-        amount: Number(item.amount),
-        installments: item.installmentCount,
+        amount,
+        installments: scheduleToPlan(amount, item.installmentCount, item.schedule),
         structureItemId: item.id,
       })
     )

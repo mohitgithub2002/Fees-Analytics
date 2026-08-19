@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import * as Tabs from '@radix-ui/react-tabs'
-import { Plus, Star, Trash2 } from 'lucide-react'
+import { CalendarDays, Plus, Star, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/v2/PageHeader'
 import {
   apiCall, Button, EmptyState, ErrorBanner, Field, inputCls, inputStyle, Modal,
@@ -285,7 +285,21 @@ function ClassroomsTab({
 
 /* ── Fee Structures ─────────────────────────────────────────────── */
 
-interface ItemDraft { category: FeeCategory; name: string; amount: string; installmentCount: string }
+interface ItemDraft {
+  category: FeeCategory
+  name: string
+  amount: string
+  installmentCount: string
+  /** One ISO date per installment; '' means "no due date for this one". */
+  schedule: string[]
+}
+
+/** Grow/shrink the due-date list to match the installment count. */
+function resizeSchedule(schedule: string[], count: number): string[] {
+  const next = schedule.slice(0, count)
+  while (next.length < count) next.push('')
+  return next
+}
 
 function StructuresTab({
   structures, classes, sessions, onChanged, setError,
@@ -305,9 +319,16 @@ function StructuresTab({
     setEditing({
       sessionId,
       classId,
-      items: existing?.items.map((i) => ({
-        category: i.category, name: i.name, amount: String(i.amount), installmentCount: String(i.installmentCount),
-      })) ?? [{ category: 'SCHOOL', name: 'School Fees', amount: '', installmentCount: '3' }],
+      items: existing?.items.map((i) => {
+        const bySeq = new Map((i.schedule ?? []).map((s) => [s.sequence, s.dueDate.slice(0, 10)]))
+        return {
+          category: i.category,
+          name: i.name,
+          amount: String(i.amount),
+          installmentCount: String(i.installmentCount),
+          schedule: Array.from({ length: i.installmentCount }, (_, n) => bySeq.get(n + 1) ?? ''),
+        }
+      }) ?? [{ category: 'SCHOOL', name: 'School Fees', amount: '', installmentCount: '3', schedule: ['', '', ''] }],
     })
   }
 
@@ -318,12 +339,22 @@ function StructuresTab({
       await apiCall('/api/v2/fee-structures', 'POST', {
         sessionId: editing.sessionId,
         classId: editing.classId,
-        items: editing.items.map((i) => ({
-          category: i.category,
-          name: i.name,
-          amount: parseFloat(i.amount),
-          installmentCount: parseInt(i.installmentCount) || 1,
-        })),
+        items: editing.items.map((i) => {
+          const count = parseInt(i.installmentCount) || 1
+          const dates = resizeSchedule(i.schedule, count)
+          // A schedule is all-or-nothing: the API rejects a partial one, since
+          // an undated installment can't be judged on-time or late.
+          const complete = dates.every((d) => d)
+          return {
+            category: i.category,
+            name: i.name,
+            amount: parseFloat(i.amount),
+            installmentCount: count,
+            ...(complete
+              ? { schedule: dates.map((dueDate, n) => ({ sequence: n + 1, dueDate })) }
+              : {}),
+          }
+        }),
       })
       setEditing(null)
       onChanged()
@@ -335,7 +366,28 @@ function StructuresTab({
   }
 
   const setItem = (idx: number, patch: Partial<ItemDraft>) =>
-    setEditing((e) => e && { ...e, items: e.items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) })
+    setEditing((e) => e && {
+      ...e,
+      items: e.items.map((it, i) => {
+        if (i !== idx) return it
+        const merged = { ...it, ...patch }
+        // Keep the due-date list in step with the installment count.
+        if (patch.installmentCount !== undefined) {
+          merged.schedule = resizeSchedule(merged.schedule, parseInt(patch.installmentCount) || 1)
+        }
+        return merged
+      }),
+    })
+
+  const setDueDate = (itemIdx: number, seqIdx: number, value: string) =>
+    setEditing((e) => e && {
+      ...e,
+      items: e.items.map((it, i) =>
+        i === itemIdx
+          ? { ...it, schedule: it.schedule.map((d, n) => (n === seqIdx ? value : d)) }
+          : it
+      ),
+    })
 
   return (
     <div className="space-y-4">
@@ -367,7 +419,12 @@ function StructuresTab({
                     <div className="space-y-0.5">
                       {st.items.map((i) => (
                         <p key={i.id} className="text-[12px] flex items-center justify-between" style={{ color: 'var(--text-secondary)' }}>
-                          <span>{i.name} <span style={{ color: 'var(--text-faint)' }}>×{i.installmentCount}</span></span>
+                          <span>
+                            {i.name} <span style={{ color: 'var(--text-faint)' }}>×{i.installmentCount}</span>
+                            {i.schedule && i.schedule.length > 0 && (
+                              <CalendarDays className="inline w-3 h-3 ml-1" style={{ color: 'var(--good-2)' }} />
+                            )}
+                          </span>
                           <span className="mono">{fmtAmt(i.amount)}</span>
                         </p>
                       ))}
@@ -391,38 +448,69 @@ function StructuresTab({
         >
           <div className="space-y-3">
             {editing.items.map((item, idx) => (
-              <div key={idx} className="flex items-end gap-2">
-                <Field label={idx === 0 ? 'Category' : ''}>
-                  <select className={inputCls} style={{ ...inputStyle, width: 110 }} value={item.category} onChange={(e) => setItem(idx, { category: e.target.value as FeeCategory })}>
-                    <option value="SCHOOL">School</option>
-                    <option value="BUS">Bus</option>
-                    <option value="OTHER">Other</option>
-                  </select>
-                </Field>
-                <div className="flex-1">
-                  <Field label={idx === 0 ? 'Name' : ''}>
-                    <input className={inputCls} style={inputStyle} value={item.name} onChange={(e) => setItem(idx, { name: e.target.value })} />
+              <div key={idx} className="rounded-xl p-3" style={{ background: 'var(--elevated)', border: '1px solid var(--border)' }}>
+                <div className="flex items-end gap-2">
+                  <Field label={idx === 0 ? 'Category' : ''}>
+                    <select className={inputCls} style={{ ...inputStyle, width: 110 }} value={item.category} onChange={(e) => setItem(idx, { category: e.target.value as FeeCategory })}>
+                      <option value="SCHOOL">School</option>
+                      <option value="BUS">Bus</option>
+                      <option value="OTHER">Other</option>
+                    </select>
                   </Field>
+                  <div className="flex-1">
+                    <Field label={idx === 0 ? 'Name' : ''}>
+                      <input className={inputCls} style={inputStyle} value={item.name} onChange={(e) => setItem(idx, { name: e.target.value })} />
+                    </Field>
+                  </div>
+                  <Field label={idx === 0 ? 'Amount' : ''}>
+                    <input type="number" className={`${inputCls} mono`} style={{ ...inputStyle, width: 110 }} value={item.amount} onChange={(e) => setItem(idx, { amount: e.target.value })} />
+                  </Field>
+                  <Field label={idx === 0 ? 'Inst.' : ''}>
+                    <input type="number" min={1} max={12} className={`${inputCls} mono`} style={{ ...inputStyle, width: 64 }} value={item.installmentCount} onChange={(e) => setItem(idx, { installmentCount: e.target.value })} />
+                  </Field>
+                  <Button
+                    variant="danger" small
+                    onClick={() => setEditing((e) => e && { ...e, items: e.items.filter((_, i) => i !== idx) })}
+                    disabled={editing.items.length <= 1}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
                 </div>
-                <Field label={idx === 0 ? 'Amount' : ''}>
-                  <input type="number" className={`${inputCls} mono`} style={{ ...inputStyle, width: 110 }} value={item.amount} onChange={(e) => setItem(idx, { amount: e.target.value })} />
-                </Field>
-                <Field label={idx === 0 ? 'Inst.' : ''}>
-                  <input type="number" min={1} max={12} className={`${inputCls} mono`} style={{ ...inputStyle, width: 64 }} value={item.installmentCount} onChange={(e) => setItem(idx, { installmentCount: e.target.value })} />
-                </Field>
-                <Button
-                  variant="danger" small
-                  onClick={() => setEditing((e) => e && { ...e, items: e.items.filter((_, i) => i !== idx) })}
-                  disabled={editing.items.length <= 1}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </Button>
+
+                {/* Due dates drive every "paid on time / late" figure in the
+                    recovery module. Leave them blank and installments simply
+                    stay undated, exactly as before. */}
+                <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <CalendarDays className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
+                    <span className="label-micro">Due Dates (optional)</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {item.schedule.map((date, seq) => (
+                      <div key={seq}>
+                        <span className="block text-[10.5px] mb-1" style={{ color: 'var(--text-faint)' }}>#{seq + 1}</span>
+                        <input
+                          type="date"
+                          className={inputCls}
+                          style={{ ...inputStyle, width: 150, height: 32 }}
+                          value={date}
+                          onChange={(e) => setDueDate(idx, seq, e.target.value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {item.schedule.some((d) => d) && !item.schedule.every((d) => d) && (
+                    <p className="text-[11px] mt-2" style={{ color: 'var(--warning)' }}>
+                      Set a date for every installment, or leave them all blank — a partial schedule is ignored.
+                    </p>
+                  )}
+                </div>
               </div>
             ))}
             <div className="flex items-center justify-between pt-1">
               <Button
                 variant="ghost" small
-                onClick={() => setEditing((e) => e && { ...e, items: [...e.items, { category: 'OTHER', name: '', amount: '', installmentCount: '1' }] })}
+                onClick={() => setEditing((e) => e && { ...e, items: [...e.items, { category: 'OTHER', name: '', amount: '', installmentCount: '1', schedule: [''] }] })}
               >
                 <Plus className="w-3.5 h-3.5" /> Add Item
               </Button>

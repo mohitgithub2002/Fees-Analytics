@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { err, handleError, ok, parseId } from '@/lib/fees/api'
 import { invalidateTags, TAGS } from '@/lib/cache'
 import { cancelTransaction } from '@/lib/fees/allocation'
+import { recomputeForStudent } from '@/lib/recovery/recompute'
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const id = parseId((await params).id)
@@ -47,6 +48,11 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
   try {
     const transaction = await prisma.$transaction((tx) => cancelTransaction(tx, id))
     invalidateTags(TAGS.fees)
+    try {
+      await recomputeForStudent(transaction.studentId)
+    } catch (e) {
+      console.error('recovery recompute after cancellation failed:', e)
+    }
     return ok(transaction)
   } catch (e) {
     return handleError(e)

@@ -4,6 +4,7 @@ import { err, handleError, isPositiveAmount, ok, parseId, readJson } from '@/lib
 import { invalidateTags, TAGS } from '@/lib/cache'
 import { $Enums, Prisma } from '@/generated/prisma/client'
 import { allocatePayment } from '@/lib/fees/allocation'
+import { recomputeForStudent } from '@/lib/recovery/recompute'
 
 export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams
@@ -106,6 +107,15 @@ export async function POST(request: NextRequest) {
       })
     )
     invalidateTags(TAGS.fees)
+    // Keeps the household's recovery profile and worklist entry in sync with
+    // this payment immediately — a household who just paid disappears from
+    // today's call list without anyone maintaining it by hand. A failure here
+    // must never fail the payment itself, which has already been recorded.
+    try {
+      await recomputeForStudent(studentId!)
+    } catch (e) {
+      console.error('recovery recompute after payment failed:', e)
+    }
     return ok(transaction, 201)
   } catch (e) {
     return handleError(e)

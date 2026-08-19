@@ -84,6 +84,11 @@ export function clearCache(): void {
 /**
  * Cache tags. `fees` covers everything derived from money movement
  * (analytics + student due lists); reference tags cover their own tables.
+ *
+ * `recovery` is separate from `fees` because it is invalidated by things that
+ * move no money at all — a logged call, a promise, an economic-tier tag — and
+ * conflating the two would drop the expensive fee aggregations every time
+ * somebody noted down a phone call.
  */
 export const TAGS = {
   fees: 'fees',
@@ -91,4 +96,5 @@ export const TAGS = {
   classes: 'classes',
   classrooms: 'classrooms',
   structures: 'structures',
+  recovery: 'recovery',
 } as const

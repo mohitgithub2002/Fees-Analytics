@@ -10,8 +10,6 @@ datasource db {
   provider = "postgresql"
 }
 
-
-
 model StudentFee {
   id Int @id @default(autoincrement())
 
@@ -110,6 +108,10 @@ model AcademicSession {
   enrollments     StudentEnrollment[]
   feeStructures   FeeStructure[]
   calendarEvents  CalendarEvent[]
+  recoveryCases   RecoveryCase[]
+  contactAttempts ContactAttempt[]
+  promises        PromiseToPay[]
+  forecasts       CollectionForecast[]
 }
 
 // Class master (session-independent), e.g. "LKG", "I", "X".
@@ -165,6 +167,7 @@ model Student {
 
   enrollments  StudentEnrollment[]
   transactions FeeTransaction[]
+  guardians    GuardianStudent[]
 
   @@index([name])
 }
@@ -182,9 +185,9 @@ model StudentEnrollment {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  student   Student         @relation(fields: [studentId], references: [id])
-  session   AcademicSession @relation(fields: [sessionId], references: [id])
-  classroom Classroom       @relation(fields: [classroomId], references: [id])
+  student   Student          @relation(fields: [studentId], references: [id])
+  session   AcademicSession  @relation(fields: [sessionId], references: [id])
+  classroom Classroom        @relation(fields: [classroomId], references: [id])
   feeItems  StudentFeeItem[]
 
   @@unique([studentId, sessionId])
@@ -216,10 +219,32 @@ model FeeStructureItem {
   amount           Decimal     @db.Decimal(12, 2)
   installmentCount Int         @default(1)
 
-  feeStructure FeeStructure     @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
+  feeStructure FeeStructure              @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
   feeItems     StudentFeeItem[]
+  schedule     FeeStructureInstallment[]
 
   @@unique([feeStructureId, name])
+}
+
+// The due-date schedule for a structure item. Optional: an item with no
+// schedule rows still splits into `installmentCount` equal, undated
+// installments (the pre-recovery behaviour). When rows are present they are
+// copied onto every student's installments, which is what makes
+// "installment 2 collects late" answerable at all.
+model FeeStructureInstallment {
+  id              Int      @id @default(autoincrement())
+  structureItemId Int
+  sequence        Int
+  label           String?
+  dueDate         DateTime @db.Date
+  // Optional explicit amount; null means "even split of the item amount".
+  amount          Decimal? @db.Decimal(12, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  structureItem FeeStructureItem @relation(fields: [structureItemId], references: [id], onDelete: Cascade)
+
+  @@unique([structureItemId, sequence])
 }
 
 // A fee assigned to one enrollment (e.g. "School Fees 2024-25" for one
@@ -689,4 +714,367 @@ model TeachingAuditLog {
   @@index([entityType, entityId])
   @@index([actorType, actorId])
   @@index([createdAt])
+}
+
+// ============================================================================
+// FEE RECOVERY MODULE
+// Sits on top of the v2 fees ledger; reads it, never writes to it. The ledger
+// stays the only source of truth for money — everything here is either
+// (a) derived and recomputable, or (b) a record of human contact.
+//
+// The module separates two things that are constantly conflated when chasing
+// fees, and keeping them apart is the whole point:
+//   PaymentArchetype — WHEN/WHETHER a family pays (derived from history)
+//   EconomicTier     — WHETHER THEY CAN pay (human judgement, system-suggested)
+// A family that is able but slow is worth a phone call; a family that is
+// willing but broke needs a payment plan, and calling them harder collects
+// nothing. Ranking on outstanding alone cannot tell those two apart.
+// ============================================================================
+
+// How a family pays, derived from their payment history. Ordered roughly
+// worst → best. Assigned by the rule cascade in src/lib/recovery/archetype.ts,
+// which also emits the plain-English evidence shown next to the label.
+enum PaymentArchetype {
+  CHRONIC_DEFAULTER // dues open in 2+ sessions at once
+  NEXT_YEAR_PAYER // pays last session's dues while this one goes uncollected
+  HEAVY_ROLLOVER // ≤50% paid by year end; the bulk rolls forward
+  YEAR_END_PARTIAL // pays late and leaves a residue that carries forward
+  YEAR_END_FULL // clears fully, but most of it lands in the last quarter
+  INSTALLMENT_REGULAR // pays each installment near its due date; clears in year
+  EARLY_FULL // clears almost everything in the first installment window
+  UNKNOWN // not enough history to say
+}
+
+// Ability to pay. Never inferred alone — the system proposes, a human confirms
+// (Guardian.economicTier is the confirmed value, GuardianProfile.suggestedTier
+// the proposal). A wrong guess here sends a struggling family to the call list
+// and lets a wealthy late-payer off, so the human tag always wins.
+enum EconomicTier {
+  AFFLUENT
+  COMFORTABLE
+  STRAINED
+  POOR
+  SEVERE
+  UNKNOWN
+}
+
+enum GuardianRelation {
+  FATHER
+  MOTHER
+  GUARDIAN
+  OTHER
+}
+
+enum ContactChannel {
+  CALL
+  SMS
+  WHATSAPP
+  VISIT
+  IN_PERSON
+  OTHER
+}
+
+enum ContactOutcome {
+  PROMISED
+  PAID_ALREADY
+  NEEDS_TIME
+  REFUSED
+  DISPUTED
+  CALL_BACK_LATER
+  NO_ANSWER
+  SWITCHED_OFF
+  WRONG_NUMBER
+}
+
+enum PromiseStatus {
+  OPEN
+  KEPT
+  PARTIAL
+  BROKEN
+  CANCELLED
+}
+
+enum RecoveryStage {
+  NEW
+  CONTACTED
+  PROMISED
+  PARTIAL
+  RECOVERED
+  SNOOZED
+  PARKED
+  ESCALATED
+}
+
+// The payer. Fees are chased per household, not per child: one father with
+// three children is one phone call and one behavioural profile, not three.
+// `normalizedName` is the matching key used by prisma/link-guardians.ts.
+model Guardian {
+  id             Int              @id @default(autoincrement())
+  name           String
+  normalizedName String
+  phone          String?
+  altPhone       String?
+  relation       GuardianRelation @default(FATHER)
+  occupation     String?
+  address        String?
+  notes          String?
+
+  // Confirmed ability to pay. Set by a human; sticky across recomputes.
+  economicTier EconomicTier @default(UNKNOWN)
+  tierSetById  Int? // User.id of the admin who set it — soft reference
+  tierSetAt    DateTime?
+  tierNote     String?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  students GuardianStudent[]
+  profile  GuardianProfile?
+  cases    RecoveryCase[]
+  contacts ContactAttempt[]
+  promises PromiseToPay[]
+
+  @@index([normalizedName])
+  @@index([phone])
+  @@index([economicTier])
+}
+
+// Which children a guardian pays for. A student may have more than one
+// guardian row, but exactly one carries isPayer — that is the household the
+// student's dues are chased through.
+model GuardianStudent {
+  id         Int              @id @default(autoincrement())
+  guardianId Int
+  studentId  Int
+  relation   GuardianRelation @default(FATHER)
+  isPayer    Boolean          @default(true)
+  // How the link was made: "auto:name+phone", "auto:name", "manual", "solo".
+  linkSource String?
+  createdAt  DateTime         @default(now())
+
+  guardian Guardian @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+  student  Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([guardianId, studentId])
+  @@index([studentId])
+}
+
+// Derived behavioural profile — never written by a human, always recomputed
+// (same contract as SyllabusPacing). Recomputing must be idempotent: the same
+// ledger state must always produce the same row.
+model GuardianProfile {
+  id         Int @id @default(autoincrement())
+  guardianId Int @unique
+
+  archetype           PaymentArchetype @default(UNKNOWN)
+  archetypeConfidence Int              @default(0) // 0–100
+  suggestedTier       EconomicTier     @default(UNKNOWN)
+
+  // 0–100. reliability = how dependably they settle what they owe, over their
+  // whole history. propensity = how likely they are to pay in the next 30 days.
+  // A chronic defaulter with an open promise scores low on one and high on the
+  // other, which is exactly the case worth calling.
+  reliabilityScore    Int     @default(0)
+  propensityScore     Int     @default(0)
+  expectedRecovery30d Decimal @default(0) @db.Decimal(12, 2)
+
+  totalOutstanding  Decimal @default(0) @db.Decimal(12, 2)
+  currentSessionDue Decimal @default(0) @db.Decimal(12, 2)
+  pastSessionsDue   Decimal @default(0) @db.Decimal(12, 2)
+  lifetimeBilled    Decimal @default(0) @db.Decimal(12, 2)
+  lifetimePaid      Decimal @default(0) @db.Decimal(12, 2)
+
+  sessionsTracked  Int @default(0)
+  sessionsWithDues Int @default(0)
+  rolloverStreak   Int @default(0)
+  childrenCount    Int @default(0)
+
+  lastPaymentAt         DateTime?
+  lastPaymentAmount     Decimal?  @db.Decimal(12, 2)
+  avgDaysToFirstPayment Int? // days from session start to their first rupee
+  avgClearanceDay       Int? // day-of-session by which they typically clear
+  onTimeInstallmentRate Int? // percent of installments paid by their due date
+  avgDaysLate           Int?
+  avgTicket             Decimal?  @db.Decimal(12, 2)
+
+  // { "1": 0.05, ... "12": 0.20 } — share of lifetime collection by calendar
+  // month. This is what "they always pay in January" is read from.
+  monthHistogram Json?
+  // string[] — the human-readable reasons behind archetype/scores, rendered
+  // verbatim in the UI. The owner has to trust the ranking, so it must explain
+  // itself rather than emit a bare number.
+  evidence       Json?
+
+  contactAttempts Int  @default(0)
+  contactPickRate Int? // percent of attempts that reached a human
+  promisesMade    Int  @default(0)
+  promisesKept    Int  @default(0)
+
+  calculatedAt DateTime @default(now())
+
+  guardian Guardian @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+
+  @@index([archetype])
+  @@index([propensityScore])
+  @@index([expectedRecovery30d])
+}
+
+// Mutable workflow state for one household in one session. Separate from
+// GuardianProfile because that table is wiped and rebuilt on every recompute,
+// while this holds decisions a human made (snoozed, parked, pinned) that must
+// survive it. Also the row the worklist query sorts and paginates over, so
+// ranking stays in SQL rather than in memory.
+model RecoveryCase {
+  id         Int @id @default(autoincrement())
+  guardianId Int
+  sessionId  Int
+
+  stage                 RecoveryStage @default(NEW)
+  priorityScore         Int           @default(0)
+  outstanding           Decimal       @default(0) @db.Decimal(12, 2)
+  expectedRecoveryValue Decimal       @default(0) @db.Decimal(12, 2)
+
+  // Why this household is off today's list, and until when. Written by the
+  // suppression rules on recompute; always surfaced to the user rather than
+  // silently hiding the row.
+  suppressedUntil   DateTime?
+  suppressionReason String?
+
+  // Human decisions. snoozedUntil is "not now"; parkedReason is "confirmed
+  // hardship, stop chasing and decide on a discount or plan instead".
+  snoozedUntil  DateTime?
+  parkedReason  String?
+  // Explicitly put on a given day's call list, overriding the ranking.
+  pinnedForDate DateTime? @db.Date
+
+  nextActionAt    DateTime?
+  lastContactAt   DateTime?
+  contactCount    Int       @default(0)
+  recoveredAmount Decimal   @default(0) @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  guardian Guardian         @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+  session  AcademicSession  @relation(fields: [sessionId], references: [id])
+  contacts ContactAttempt[]
+
+  @@unique([guardianId, sessionId])
+  @@index([sessionId, stage])
+  @@index([expectedRecoveryValue])
+  @@index([pinnedForDate])
+}
+
+// One logged attempt to reach a household. Append-only in practice: an
+// attempt that happened is a fact, and the contact history is the single best
+// predictor the propensity model has.
+model ContactAttempt {
+  id         Int  @id @default(autoincrement())
+  guardianId Int
+  sessionId  Int?
+  caseId     Int?
+
+  channel  ContactChannel @default(CALL)
+  outcome  ContactOutcome
+  talkedTo String?
+  notes    String?
+
+  nextFollowUpAt DateTime?
+  contactedAt    DateTime  @default(now())
+
+  loggedById   Int? // User.id — soft reference, matching the teaching module
+  loggedByName String?
+  createdAt    DateTime @default(now())
+
+  guardian Guardian         @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+  session  AcademicSession? @relation(fields: [sessionId], references: [id])
+  case     RecoveryCase?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  promise  PromiseToPay?
+
+  @@index([guardianId, contactedAt])
+  @@index([outcome])
+  @@index([contactedAt])
+}
+
+// "I will pay ₹5,000 by the 12th." Kept as its own table rather than fields on
+// ContactAttempt because whether a family KEEPS its promises is the strongest
+// behavioural signal available, and it has to be queryable on its own:
+// promises due today drive the call list, promises broken drive re-contact.
+//
+// Resolution is automatic — payments by the household between the promise and
+// promisedFor + grace settle it (see src/lib/recovery/promises.ts).
+model PromiseToPay {
+  id          Int      @id @default(autoincrement())
+  guardianId  Int
+  sessionId   Int
+  amount      Decimal  @db.Decimal(12, 2)
+  promisedFor DateTime @db.Date
+
+  status        PromiseStatus @default(OPEN)
+  settledAmount Decimal       @default(0) @db.Decimal(12, 2)
+  settledAt     DateTime?
+
+  sourceContactId Int?    @unique
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  guardian      Guardian        @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+  session       AcademicSession @relation(fields: [sessionId], references: [id])
+  sourceContact ContactAttempt? @relation(fields: [sourceContactId], references: [id], onDelete: SetNull)
+
+  @@index([guardianId])
+  @@index([status, promisedFor])
+}
+
+// A dated snapshot of what the system expected to collect in a given month.
+// Snapshots rather than a live number, so predicted-vs-actual can be measured
+// and fed back as a calibration factor — a forecast nobody scores is a guess.
+// One snapshot per (session, month, day) keeps the history bounded.
+model CollectionForecast {
+  id          Int      @id @default(autoincrement())
+  sessionId   Int
+  month       DateTime @db.Date // first day of the forecast month
+  generatedOn DateTime @db.Date // the day this snapshot was taken
+  generatedAt DateTime @default(now())
+
+  // Three bands: committed = open promises + installments due from families
+  // who reliably pay them; likely = propensity-weighted; stretch = everything
+  // outstanding at a low probability.
+  committed Decimal @db.Decimal(12, 2)
+  likely    Decimal @db.Decimal(12, 2)
+  stretch   Decimal @db.Decimal(12, 2)
+
+  actualCollected   Decimal? @db.Decimal(12, 2)
+  calibrationFactor Float    @default(1)
+  breakdown         Json?
+
+  session AcademicSession @relation(fields: [sessionId], references: [id])
+
+  @@unique([sessionId, month, generatedOn])
+  @@index([sessionId, month])
+}
+
+// Single-row tuning for the targeting rules. Every field here decides who does
+// NOT get called, which is the part that saves effort — so they are settings a
+// school owner can adjust, not constants buried in code.
+model RecoveryConfig {
+  id Int @id @default(1)
+
+  cooldownDays             Int @default(5) // don't re-contact within N days
+  justPaidSuppressDays     Int @default(7) // they just paid; leave them alone
+  promiseGraceDays         Int @default(3) // days past promisedFor before it breaks
+  noAnswerBackoffThreshold Int @default(3) // consecutive no-answers before backing off
+  noAnswerBackoffDays      Int @default(7)
+
+  minOutstanding  Decimal @default(500) @db.Decimal(12, 2) // ignore trivial dues
+  dailyCallTarget Int     @default(30)
+
+  // Optional overrides for the propensity weights; null = code defaults.
+  scoreWeights Json?
+
+  updatedById Int? // User.id — soft reference
+  updatedAt   DateTime @updatedAt
 }

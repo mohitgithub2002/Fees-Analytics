@@ -6,6 +6,10 @@ the foundation for a broader School ERP: students, sessions, classes and
 enrollments are first-class entities that future modules (attendance, exams,
 transport) can hang off without schema breakage.
 
+> **See also:** [RECOVERY.md](./RECOVERY.md) — the fee recovery module reads this
+> ledger to profile payment behaviour, rank a daily call list, and forecast
+> collection. It never writes to the tables described here.
+
 ## Data model
 
 ```

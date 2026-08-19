@@ -14,7 +14,12 @@
     "db:load-csv": "npx tsx prisma/load-csv.ts",
     "db:migrate-v2": "npx tsx prisma/migrate-v2.ts",
     "db:create-superuser": "npx tsx prisma/create-superuser.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "recovery:link-guardians": "npx tsx prisma/link-guardians.ts",
+    "recovery:backfill-due-dates": "npx tsx prisma/backfill-due-dates.ts",
+    "recovery:seed-demo": "npx tsx prisma/seed-recovery-demo.ts",
+    "recovery:verify": "npx tsx scripts/verify-archetypes.ts",
+    "recovery:recalculate": "npx tsx scripts/recovery-recalculate.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
