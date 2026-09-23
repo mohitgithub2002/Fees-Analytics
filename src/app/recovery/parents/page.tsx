@@ -31,6 +31,8 @@ interface Row {
 const ARCHETYPES = Object.keys(ARCHETYPE_LABEL) as PaymentArchetype[]
 const TIERS = Object.keys(TIER_LABEL) as EconomicTier[]
 
+const selectStyle = { ...inputStyle, cursor: 'pointer' }
+
 export default function ParentsPage() {
   const [rows, setRows] = useState<Row[]>([])
   const [total, setTotal] = useState(0)
@@ -76,11 +78,15 @@ export default function ParentsPage() {
       <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-4">
         {error && <ErrorBanner error={error} onDismiss={() => setError('')} />}
 
-        {/* ── Filters ─────────────────────────────────────── */}
-        <div className="flex flex-wrap gap-2.5">
-          <div className="relative flex-1 min-w-[220px]">
+        {/* ── Filters ─────────────────────────────────────────
+            A grid rather than a wrapping flex row: inputCls is w-full, so
+            every control here fills whatever track it sits in and the four
+            dropdowns line up beside the search box instead of each claiming
+            a row of its own. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+          <div className="relative sm:col-span-2">
             <Search
-              className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2"
+              className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
               style={{ color: 'var(--text-muted)' }}
             />
             <input
@@ -95,8 +101,8 @@ export default function ParentsPage() {
             />
           </div>
           <select
-            className={`${inputCls} w-auto min-w-[170px]`}
-            style={inputStyle}
+            className={inputCls}
+            style={selectStyle}
             value={archetype}
             onChange={(e) => {
               setArchetype(e.target.value)
@@ -111,8 +117,8 @@ export default function ParentsPage() {
             ))}
           </select>
           <select
-            className={`${inputCls} w-auto min-w-[160px]`}
-            style={inputStyle}
+            className={inputCls}
+            style={selectStyle}
             value={tier}
             onChange={(e) => {
               setTier(e.target.value)
@@ -127,8 +133,8 @@ export default function ParentsPage() {
             ))}
           </select>
           <select
-            className={`${inputCls} w-auto`}
-            style={inputStyle}
+            className={inputCls}
+            style={selectStyle}
             value={status}
             onChange={(e) => {
               setStatus(e.target.value)
@@ -140,8 +146,8 @@ export default function ParentsPage() {
             <option value="skipped">Skipped today</option>
           </select>
           <select
-            className={`${inputCls} w-auto`}
-            style={inputStyle}
+            className={inputCls}
+            style={selectStyle}
             value={sortKey}
             onChange={(e) => setSortKey(e.target.value)}
           >
