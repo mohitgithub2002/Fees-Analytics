@@ -6,11 +6,51 @@ import { $Enums } from '@/generated/prisma/client'
 
 const CATEGORIES = new Set(Object.values($Enums.FeeCategory))
 
+interface ScheduleRowInput {
+  label?: string
+  dueDate?: string
+}
+
 interface StructureItemInput {
   category?: $Enums.FeeCategory
   name?: string
   amount?: number
   installmentCount?: number
+  /** Optional due-date schedule — see validateSchedule for the rules. */
+  schedule?: ScheduleRowInput[]
+}
+
+/**
+ * Validate an item's due-date schedule.
+ *
+ * The schedule is ALL-OR-NOTHING: either every installment of the item is
+ * dated or none is. A half-dated item would silently skew the on-time rate,
+ * because an undated installment can be judged neither on time nor late.
+ * Dates must also advance with the sequence — a schedule that runs backwards
+ * is a data-entry slip, not a valid plan.
+ */
+function validateSchedule(item: StructureItemInput, itemName: string): string | null {
+  if (item.schedule === undefined) return null
+  if (!Array.isArray(item.schedule)) return `${itemName}: schedule must be an array`
+  if (item.schedule.length === 0) return null
+
+  const expected = item.installmentCount ?? 1
+  if (item.schedule.length !== expected) {
+    return `${itemName}: schedule has ${item.schedule.length} dates but the item has ${expected} installment(s) — date every installment or none`
+  }
+
+  let previous = -Infinity
+  for (let i = 0; i < item.schedule.length; i++) {
+    const raw = item.schedule[i].dueDate
+    if (!raw) return `${itemName}: installment ${i + 1} is missing a due date`
+    const time = new Date(raw).getTime()
+    if (Number.isNaN(time)) return `${itemName}: installment ${i + 1} has an invalid due date`
+    if (time <= previous) {
+      return `${itemName}: due dates must get later with each installment (installment ${i + 1} is not after the one before it)`
+    }
+    previous = time
+  }
+  return null
 }
 
 function validateItems(items: unknown): string | StructureItemInput[] {
@@ -30,6 +70,8 @@ function validateItems(items: unknown): string | StructureItemInput[] {
     ) {
       return 'installmentCount must be a positive integer'
     }
+    const scheduleError = validateSchedule(item, item.name.trim())
+    if (scheduleError) return scheduleError
     const key = item.name.trim().toLowerCase()
     if (names.has(key)) return `duplicate item name: ${item.name}`
     names.add(key)
@@ -50,7 +92,10 @@ export async function GET(request: NextRequest) {
         include: {
           class: true,
           session: { select: { id: true, name: true, isCurrent: true } },
-          items: { orderBy: { id: 'asc' } },
+          items: {
+            orderBy: { id: 'asc' },
+            include: { schedule: { orderBy: { sequence: 'asc' } } },
+          },
         },
         orderBy: [{ sessionId: 'desc' }, { class: { displayOrder: 'asc' } }],
       }),
@@ -86,18 +131,35 @@ export async function POST(request: NextRequest) {
         update: {},
       })
       await tx.feeStructureItem.deleteMany({ where: { feeStructureId: created.id } })
-      await tx.feeStructureItem.createMany({
-        data: validated.map((item) => ({
-          feeStructureId: created.id,
-          category: item.category!,
-          name: item.name!.trim(),
-          amount: item.amount!,
-          installmentCount: item.installmentCount ?? 1,
-        })),
-      })
+      // Created one at a time rather than with createMany so each item's
+      // due-date schedule can be written in the same statement.
+      for (const item of validated) {
+        const count = item.installmentCount ?? 1
+        const schedule = item.schedule ?? []
+        await tx.feeStructureItem.create({
+          data: {
+            feeStructureId: created.id,
+            category: item.category!,
+            name: item.name!.trim(),
+            amount: item.amount!,
+            installmentCount: count,
+            schedule: {
+              create: schedule.map((row, i) => ({
+                sequence: i + 1,
+                label: row.label?.trim() || (count === 1 ? 'Installment' : `Installment ${i + 1}`),
+                dueDate: new Date(row.dueDate!),
+              })),
+            },
+          },
+        })
+      }
       return tx.feeStructure.findUniqueOrThrow({
         where: { id: created.id },
-        include: { class: true, session: { select: { id: true, name: true } }, items: true },
+        include: {
+          class: true,
+          session: { select: { id: true, name: true } },
+          items: { include: { schedule: { orderBy: { sequence: 'asc' } } } },
+        },
       })
     })
     invalidateTags(TAGS.structures, TAGS.classes)

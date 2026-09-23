@@ -101,6 +101,10 @@ backward.
 
 All endpoints return money as plain numbers and errors as `{ "error": "..." }`.
 
+The [recovery module](./RECOVERY.md) layers on top of this ledger — it reads
+everything above and writes nothing, except by replaying payments through
+`allocatePayment` during a payment-history import.
+
 ## Migrating the legacy data
 
 ```bash

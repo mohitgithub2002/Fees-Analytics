@@ -91,4 +91,8 @@ export const TAGS = {
   classes: 'classes',
   classrooms: 'classrooms',
   structures: 'structures',
+  // Everything derived by the recovery module: profiles, cases, the worklist
+  // and the behaviour lenses. Invalidated by a recompute, by logging a call,
+  // and by any money movement (which also triggers a recompute).
+  recovery: 'recovery',
 } as const

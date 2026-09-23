@@ -12,15 +12,53 @@ import {
   ShieldCheck,
   GraduationCap,
   LogOut,
+  PhoneCall,
+  Target,
+  TrendingUp,
+  Upload,
+  Link2,
+  SlidersHorizontal,
 } from 'lucide-react'
 
-const NAV = [
-  { icon: LayoutDashboard, label: 'Recovery (Legacy)', href: '/', superuserOnly: false },
-  { icon: BarChart3, label: 'Dashboard', href: '/manage', superuserOnly: false },
-  { icon: Users, label: 'Students', href: '/manage/students', superuserOnly: false },
-  { icon: Receipt, label: 'Transactions', href: '/manage/transactions', superuserOnly: false },
-  { icon: Settings, label: 'Setup', href: '/manage/setup', superuserOnly: false },
-  { icon: ShieldCheck, label: 'Users', href: '/manage/users', superuserOnly: true },
+/**
+ * Recovery leads, because it is the only group anybody opens with a job to do
+ * — the fees screens are where you look something up, this is where the day's
+ * work is. The legacy dashboard sits at the bottom, out of the way.
+ */
+const NAV_GROUPS = [
+  {
+    label: 'Recovery',
+    items: [
+      { icon: Target, label: 'Command Center', href: '/recovery', superuserOnly: false },
+      { icon: PhoneCall, label: 'Call List', href: '/recovery/worklist', superuserOnly: false },
+      { icon: Users, label: 'Families', href: '/recovery/parents', superuserOnly: false },
+      { icon: BarChart3, label: 'How They Pay', href: '/recovery/behavior', superuserOnly: false },
+      { icon: TrendingUp, label: 'Cash Forecast', href: '/recovery/forecast', superuserOnly: false },
+    ],
+  },
+  {
+    label: 'Fees',
+    items: [
+      { icon: LayoutDashboard, label: 'Dashboard', href: '/manage', superuserOnly: false },
+      { icon: Users, label: 'Students', href: '/manage/students', superuserOnly: false },
+      { icon: Receipt, label: 'Payments', href: '/manage/transactions', superuserOnly: false },
+      { icon: Settings, label: 'Setup', href: '/manage/setup', superuserOnly: false },
+    ],
+  },
+  {
+    label: 'Data & Settings',
+    items: [
+      { icon: Upload, label: 'School Data', href: '/manage/import', superuserOnly: false },
+      { icon: Link2, label: 'Parents & Families', href: '/recovery/households', superuserOnly: false },
+      {
+        icon: SlidersHorizontal,
+        label: 'Call Rules',
+        href: '/recovery/settings',
+        superuserOnly: false,
+      },
+      { icon: ShieldCheck, label: 'Staff Logins', href: '/manage/users', superuserOnly: true },
+    ],
+  },
 ]
 
 interface AuthUser {
@@ -58,8 +96,10 @@ export function Sidebar() {
     ? user.name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
     : '—'
 
+  // Exact match for section roots, so /recovery does not stay highlighted
+  // while you are three screens deep inside it.
   const isActive = (href: string) =>
-    href === '/' || href === '/manage'
+    href === '/' || href === '/manage' || href === '/recovery'
       ? pathname === href
       : pathname === href || pathname.startsWith(href + '/')
 
@@ -90,37 +130,47 @@ export function Sidebar() {
       </div>
 
       {/* ── Navigation ────────────────────────────────────── */}
-      <nav className="flex-1 px-3 pt-4 overflow-y-auto">
-        <p className="label-micro px-2 mb-2">Menu</p>
-        <div className="space-y-0.5">
-          {NAV.filter((item) => !item.superuserOnly || user?.role === 'SUPERUSER').map((item) => {
-            const active = isActive(item.href)
-            return (
-              <Link
-                key={item.label}
-                href={item.href}
-                className="group relative flex items-center gap-3 px-2.5 h-9 rounded-lg text-[13px] font-medium transition-colors duration-150"
-                style={
-                  active
-                    ? { background: 'var(--accent-soft)', color: 'var(--text-primary)' }
-                    : { color: 'var(--text-secondary)' }
-                }
-              >
-                {active && (
-                  <span
-                    className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-full"
-                    style={{ background: 'var(--accent)' }}
-                  />
-                )}
-                <item.icon
-                  className="w-[17px] h-[17px] flex-shrink-0 transition-colors"
-                  style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}
-                />
-                <span>{item.label}</span>
-              </Link>
-            )
-          })}
-        </div>
+      <nav className="flex-1 px-3 pt-4 pb-2 overflow-y-auto">
+        {NAV_GROUPS.map((group) => {
+          const items = group.items.filter(
+            (item) => !item.superuserOnly || user?.role === 'SUPERUSER'
+          )
+          if (items.length === 0) return null
+          return (
+            <div key={group.label} className="mb-4">
+              <p className="label-micro px-2 mb-2">{group.label}</p>
+              <div className="space-y-0.5">
+                {items.map((item) => {
+                  const active = isActive(item.href)
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className="group relative flex items-center gap-3 px-2.5 h-9 rounded-lg text-[13px] font-medium transition-colors duration-150"
+                      style={
+                        active
+                          ? { background: 'var(--accent-soft)', color: 'var(--text-primary)' }
+                          : { color: 'var(--text-secondary)' }
+                      }
+                    >
+                      {active && (
+                        <span
+                          className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-full"
+                          style={{ background: 'var(--accent)' }}
+                        />
+                      )}
+                      <item.icon
+                        className="w-[17px] h-[17px] flex-shrink-0 transition-colors"
+                        style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}
+                      />
+                      <span>{item.label}</span>
+                    </Link>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
       </nav>
 
       {/* ── Footer: signed-in user + logout ───────────────── */}

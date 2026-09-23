@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { err, handleError, ok, parseId } from '@/lib/fees/api'
 import { invalidateTags, TAGS } from '@/lib/cache'
 import { cancelTransaction } from '@/lib/fees/allocation'
+import { recomputeForStudent } from '@/lib/recovery/recompute'
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const id = parseId((await params).id)
@@ -46,7 +47,12 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
 
   try {
     const transaction = await prisma.$transaction((tx) => cancelTransaction(tx, id))
-    invalidateTags(TAGS.fees)
+    invalidateTags(TAGS.fees, TAGS.recovery)
+    // A reversed payment puts the balance back, so the family belongs on the
+    // call list again. Non-fatal for the same reason as on the payment path.
+    await recomputeForStudent(transaction.studentId).catch((e) =>
+      console.error('recovery refresh after cancellation failed', e)
+    )
     return ok(transaction)
   } catch (e) {
     return handleError(e)

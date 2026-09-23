@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx prisma *)",
+      "Bash(npx tsc *)",
+      "Bash(awk -F',' 'NR>1 && $23 != \"\" {print $23}' feesdata.csv)",
+      "Bash(awk -F',' 'NR>1 {print $1}' feesdata.csv)",
+      "Bash(awk -F',' 'NR>1 && $23 != \"\" {print length\\($23\\)\": \"$23}' feesdata.csv)",
+      "Bash(cd \"d:/Revenew Pvt Ltd/project/VPS/fees-recovery\" && tail -20 /tmp/dev.log 2>/dev/null; echo \"=== task output ===\"; tail -20 \"C:/Users/goyal/AppData/Local/Temp/claude/d--Revenew-Pvt-Ltd-project-VPS-fees-recovery/8e755b53-4206-48da-be6d-826c8de8567f/tasks/bd1a6mik9.output\" 2>/dev/null)",
+      "Read(//tmp/**)",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{const b=JSON.parse\\(s\\);if\\(b.error\\){console.log\\('ERR',b.error\\);return}console.log\\('totals:',JSON.stringify\\(b.data.totals\\)\\);console.log\\('queue len:',b.data.queue.length\\);console.log\\('skipped groups:',JSON.stringify\\(b.data.skipped\\)\\);console.log\\('toFix len:',b.data.toFix.length\\);if\\(b.data.toFix[0]\\)console.log\\('sample toFix:',b.data.toFix[0].displayName,b.data.toFix[0].outstanding,b.data.toFix[0].suppressionReason\\)}\\)\")",
+      "Bash(node -e 'let s='\\\\'''\\\\'';process.stdin.on\\('\\\\''data'\\\\'',d=>s+=d\\).on\\('\\\\''end'\\\\'',\\(\\)=>{const b=JSON.parse\\(s\\);if\\(b.error\\){console.log\\('\\\\''ERR'\\\\'',b.error\\);return} *)",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{const b=JSON.parse\\(s\\);console.log\\('  queue after unpin:',b.data.queue.length\\)}\\)\")",
+      "Bash(grep -iA6 \"error\\\\|Invalid\")",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{const b=JSON.parse\\(s\\);const d=b.data;console.log\\('queue:',d.queue.length,'| pinned:',d.totals.pinned\\);d.queue.forEach\\(q=>console.log\\('  ->',q.displayName,'pinnedToday=',q.isPinnedToday,'| suppressionRule=',q.suppressionRule,'| reason=',q.suppressionReason\\)\\)}\\)\")",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{const d=JSON.parse\\(s\\).data;console.log\\('queue:',d.queue.length,'| pinned:',d.totals.pinned\\);d.queue.forEach\\(q=>console.log\\('  ->',q.displayName,'pinned=',q.isPinnedToday,'| storedRule=',q.suppressionRule,'|',q.suppressionReason\\)\\)}\\)\")",
+      "Bash(xargs wc -l)",
+      "Bash(python3 -)",
+      "Bash(sed -i 's/NOT LIKE \\\\${UNDATED_PREFIX}/!~ ${UNDATED_PREFIX}/g' src/lib/recovery/cohorts.ts src/lib/recovery/forecast.ts)",
+      "Bash(sed -i \"s|^/\\\\*\\\\* Legacy receipts carry the import run's timestamp, not a real payment date\\\\. \\\\*/$||\" src/lib/recovery/cohorts.ts)",
+      "Bash(sed -i \"s|^const UNDATED_PREFIX = 'LEGACY-%'$|const UNDATED_PREFIX = UNDATED_RECEIPT_REGEX|\" src/lib/recovery/cohorts.ts src/lib/recovery/forecast.ts)",
+      "Bash(sed -i 's|^import type { $Enums } from '\\\\''@/generated/prisma/client'\\\\''$|import type { $Enums } from '\\\\''@/generated/prisma/client'\\\\''\\\\nimport { UNDATED_RECEIPT_REGEX } from '\\\\''./provenance'\\\\''|' src/lib/recovery/cohorts.ts)",
+      "Bash(sed -i \"s|^import { prisma } from '@/lib/prisma'$|import { prisma } from '@/lib/prisma'\\\\nimport { UNDATED_RECEIPT_REGEX } from './provenance'|\" src/lib/recovery/forecast.ts)",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{const b=JSON.parse\\(s\\);if\\(b.error\\)return console.log\\('ERR',b.error\\);const d=b.data;console.log\\(' committedRows:',d.committedRows,'students:',d.committedStudents,'skipped:',d.skippedStudents,'failures:',d.failures.length\\);d.failures.forEach\\(f=>console.log\\('  FAIL',f.studentName,f.error\\)\\)}\\)\")",
+      "Bash(node -e 'let s='\\\\'''\\\\'';process.stdin.on\\('\\\\''data'\\\\'',d=>s+=d\\).on\\('\\\\''end'\\\\'',\\(\\)=>{const d=JSON.parse\\(s\\).data;const inr=n=>'\\\\''₹'\\\\''+Math.round\\(n\\).toLocaleString\\('\\\\''en-IN'\\\\''\\); *)"
+    ]
+  }
+}

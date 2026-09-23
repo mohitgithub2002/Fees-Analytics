@@ -4,6 +4,7 @@ import { err, handleError, isPositiveAmount, ok, parseId, readJson } from '@/lib
 import { invalidateTags, TAGS } from '@/lib/cache'
 import { $Enums, Prisma } from '@/generated/prisma/client'
 import { allocatePayment } from '@/lib/fees/allocation'
+import { recomputeForStudent } from '@/lib/recovery/recompute'
 
 export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams
@@ -105,7 +106,15 @@ export async function POST(request: NextRequest) {
         paidAt,
       })
     )
-    invalidateTags(TAGS.fees)
+    invalidateTags(TAGS.fees, TAGS.recovery)
+    // Refresh this family's recovery case so a household that pays mid-session
+    // drops off the call list on the next load, and any open promise they just
+    // settled is closed. Scoped to the one household and deliberately
+    // non-fatal: a stale worklist row is a far smaller problem than a payment
+    // that failed to record.
+    await recomputeForStudent(studentId!).catch((e) =>
+      console.error('recovery refresh after payment failed', e)
+    )
     return ok(transaction, 201)
   } catch (e) {
     return handleError(e)

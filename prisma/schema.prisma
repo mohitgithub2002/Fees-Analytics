@@ -10,8 +10,6 @@ datasource db {
   provider = "postgresql"
 }
 
-
-
 model StudentFee {
   id Int @id @default(autoincrement())
 
@@ -110,6 +108,9 @@ model AcademicSession {
   enrollments     StudentEnrollment[]
   feeStructures   FeeStructure[]
   calendarEvents  CalendarEvent[]
+  recoveryCases   RecoveryCase[]
+  contactAttempts ContactAttempt[]
+  forecasts       CollectionForecast[]
 }
 
 // Class master (session-independent), e.g. "LKG", "I", "X".
@@ -163,8 +164,10 @@ model Student {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  enrollments  StudentEnrollment[]
-  transactions FeeTransaction[]
+  enrollments    StudentEnrollment[]
+  transactions   FeeTransaction[]
+  householdLinks HouseholdMember[]
+  importRows     PaymentImportRow[]
 
   @@index([name])
 }
@@ -182,9 +185,9 @@ model StudentEnrollment {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  student   Student         @relation(fields: [studentId], references: [id])
-  session   AcademicSession @relation(fields: [sessionId], references: [id])
-  classroom Classroom       @relation(fields: [classroomId], references: [id])
+  student   Student          @relation(fields: [studentId], references: [id])
+  session   AcademicSession  @relation(fields: [sessionId], references: [id])
+  classroom Classroom        @relation(fields: [classroomId], references: [id])
   feeItems  StudentFeeItem[]
 
   @@unique([studentId, sessionId])
@@ -216,8 +219,9 @@ model FeeStructureItem {
   amount           Decimal     @db.Decimal(12, 2)
   installmentCount Int         @default(1)
 
-  feeStructure FeeStructure     @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
+  feeStructure FeeStructure              @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
   feeItems     StudentFeeItem[]
+  schedule     FeeStructureInstallment[]
 
   @@unique([feeStructureId, name])
 }
@@ -689,4 +693,569 @@ model TeachingAuditLog {
   @@index([entityType, entityId])
   @@index([actorType, actorId])
   @@index([createdAt])
+}
+
+// ============================================================================
+// FEES INTELLIGENCE & RECOVERY MODULE
+//
+// Sits on top of the v2 ledger above: it READS the ledger and never writes to
+// it, except through allocatePayment/cancelTransaction during a payment-history
+// import. Everything here is one of three things, and keeping them apart is the
+// whole design:
+//
+//   DERIVED   HouseholdProfile, and the score columns on RecoveryCase.
+//             Rebuilt wholesale on every recompute. Never hand-written.
+//   HUMAN     Household.economicTier, RecoveryCase stage/snooze/park/pin,
+//             ContactAttempt, PromiseToPay. A recompute must never touch these.
+//   LEDGER    Everything above this block. Read-only from here.
+//
+// See docs/RECOVERY.md.
+// ============================================================================
+
+// When/whether a household pays. Derived from the ledger, never hand-set.
+//
+// Two independent sources feed this and they become available at different
+// times. The CARRY axis — how much rolls forward into the next session — is a
+// present fact in the ledger and works today. The TIMING axis — when in the
+// year money actually arrives — needs both dated payments and installment due
+// dates, so it stays dark until the payment-history import has run. Confidence
+// is therefore reported per axis (see HouseholdProfile), not as one number.
+enum PaymentArchetype {
+  CHRONIC_DEFAULTER // dues open in 2+ sessions at once
+  NEXT_YEAR_PAYER // pays last session's dues while this one goes uncollected
+  HEAVY_ROLLOVER // <=50% paid by year end; the bulk rolls forward
+  YEAR_END_PARTIAL // pays late and leaves a residue that carries forward
+  YEAR_END_FULL // clears fully, but most of it lands in the last quarter
+  INSTALLMENT_REGULAR // pays each installment near its due date; clears in year
+  EARLY_FULL // clears almost everything in the first installment window
+  UNKNOWN // not enough history to say
+}
+
+// Ability to pay. Never inferred alone — the system proposes
+// (HouseholdProfile.suggestedTier), a human confirms (Household.economicTier).
+// A wrong guess here sends a struggling family to the call list and lets a
+// wealthy late-payer off, so the human tag always wins. UNKNOWN is the normal
+// state until someone has actually spoken to the family.
+enum EconomicTier {
+  AFFLUENT
+  COMFORTABLE
+  STRAINED
+  POOR
+  SEVERE
+  UNKNOWN
+}
+
+enum GuardianRelation {
+  FATHER
+  MOTHER
+  GUARDIAN
+  OTHER
+}
+
+// Whether a number has been proven to reach the household. Migrated students
+// have no phone at all (migrate-v2.ts never populates Student.phone and the
+// legacy CSV has no phone column), so reachability is tracked explicitly
+// rather than assumed — a household nobody can dial is a recovery blocker,
+// not a low-priority case.
+enum ContactVerification {
+  UNVERIFIED
+  VERIFIED
+  WRONG_NUMBER
+  UNREACHABLE
+}
+
+enum ContactChannel {
+  CALL
+  SMS
+  WHATSAPP
+  VISIT
+  IN_PERSON
+  OTHER
+}
+
+enum ContactOutcome {
+  PROMISED
+  PAID_ALREADY
+  NEEDS_TIME
+  REFUSED
+  DISPUTED
+  CALL_BACK_LATER
+  NO_ANSWER
+  SWITCHED_OFF
+  WRONG_NUMBER
+}
+
+// Promises settle themselves from real payments — nobody ticks a box.
+enum PromiseStatus {
+  OPEN
+  KEPT
+  PARTIAL
+  BROKEN
+  CANCELLED
+}
+
+enum RecoveryStage {
+  NEW
+  CONTACTED
+  PROMISED
+  PARTIAL
+  RECOVERED
+  SNOOZED
+  PARKED
+  ESCALATED
+}
+
+// How much of a household's payment timing is real rather than assumed.
+// Screens built on anything but REAL must say so — an owner must never
+// mistake a reconstructed date for recorded history.
+enum TimingProvenance {
+  REAL // every payment carries a recorded date
+  PARTIAL // some payments dated, others fall back to session-relative timing
+  NONE // no dated payments; the timing axis is unusable for this household
+}
+
+enum ImportBatchStatus {
+  DRY_RUN
+  COMMITTED
+  REVERTED
+  FAILED
+}
+
+enum ImportRowStatus {
+  MATCHED
+  UNMATCHED
+  AMBIGUOUS
+  INVALID
+  SKIPPED
+  COMMITTED
+}
+
+// Due-date schedule for one fee-structure item, copied onto a student's
+// installments when the structure is applied. Without it, "installment 2
+// collects late" is unanswerable.
+//
+// The schedule is ALL-OR-NOTHING per item — every installment carries a date
+// or none does — because an undated installment cannot be judged on time or
+// late, and a half-dated item would silently skew the on-time rate.
+model FeeStructureInstallment {
+  id              Int      @id @default(autoincrement())
+  structureItemId Int
+  sequence        Int
+  label           String
+  dueDate         DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  structureItem FeeStructureItem @relation(fields: [structureItemId], references: [id], onDelete: Cascade)
+
+  @@unique([structureItemId, sequence])
+}
+
+// The payer. Fees are chased per household, not per child: one father with
+// three children is one phone call and one behavioural profile, not three.
+//
+// Grouping is deliberately conservative — see prisma/link-households.ts. A
+// false merge invents a household owing several families' fees, corrupts its
+// profile and floats a phantom family to the top of the call list; a missed
+// merge only costs a second phone call.
+model Household {
+  id             Int       @id @default(autoincrement())
+  displayName    String
+  normalizedName String
+  // How this grouping was arrived at: "csv:siblings", "auto:father+surname",
+  // "auto:father+surname+phone", "manual", "solo".
+  linkSource     String    @default("solo")
+  // Set when the grouping needs a human to confirm or split it (oversized
+  // sibling groups, ambiguous sibling references). Surfaced at
+  // /recovery/households; never blocks the household from being called.
+  needsReview    Boolean   @default(false)
+  reviewNote     String?
+  confirmedAt    DateTime?
+  confirmedById  Int?
+
+  // Ability to pay — HUMAN-SET. HouseholdProfile.suggestedTier is only a
+  // proposal; this column is what scoring actually uses.
+  economicTier  EconomicTier @default(UNKNOWN)
+  tierSetById   Int?
+  tierSetByName String?
+  tierSetAt     DateTime?
+  tierNote      String?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members         HouseholdMember[]
+  contacts        HouseholdContact[]
+  profile         HouseholdProfile?
+  cases           RecoveryCase[]
+  contactAttempts ContactAttempt[]
+  promises        PromiseToPay[]
+
+  @@index([normalizedName])
+  @@index([needsReview])
+  @@index([economicTier])
+}
+
+// Which children belong to which household. A student belongs to exactly one
+// household, so the unique key is the studentId.
+model HouseholdMember {
+  id          Int      @id @default(autoincrement())
+  householdId Int
+  studentId   Int
+  // Same vocabulary as Household.linkSource — kept per member so a hand-moved
+  // child is distinguishable from the ones the script grouped.
+  linkSource  String   @default("solo")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  student   Student   @relation(fields: [studentId], references: [id])
+
+  @@unique([studentId])
+  @@index([householdId])
+}
+
+// A number the household can actually be reached on.
+//
+// Modelled as its own table rather than a column pair because reachability is
+// a first-class recovery problem here: no migrated student has a phone, so
+// "which households can we not call?" has to be queryable, and a number proven
+// wrong has to be recordable without losing it.
+model HouseholdContact {
+  id            Int                 @id @default(autoincrement())
+  householdId   Int
+  name          String?
+  relation      GuardianRelation    @default(FATHER)
+  // Normalized via src/lib/auth/phone.ts so the same number entered two ways
+  // matches. rawPhone keeps whatever was typed, for display and correction.
+  phone         String
+  rawPhone      String?
+  isPrimary     Boolean             @default(false)
+  verification  ContactVerification @default(UNVERIFIED)
+  lastReachedAt DateTime?
+  notes         String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, phone])
+  @@index([phone])
+  @@index([verification])
+}
+
+// DERIVED. Rebuilt wholesale on every recompute — same contract as
+// SyllabusPacing: never human-written, always recomputable, idempotent.
+// Nothing a person decides may live here; that belongs on Household or
+// RecoveryCase, which a recompute does not touch.
+model HouseholdProfile {
+  id          Int @id @default(autoincrement())
+  householdId Int
+
+  // --- Classification -------------------------------------------------
+  archetype        PaymentArchetype @default(UNKNOWN)
+  // Confidence is split because the two axes come from different data that
+  // arrives at different times. Both are clamped while sessionsTracked < 2:
+  // one year of history is a sample of one, not a habit.
+  carryConfidence  Float            @default(0)
+  timingConfidence Float            @default(0)
+  suggestedTier    EconomicTier     @default(UNKNOWN)
+  // Plain-English lines, rendered verbatim by the UI. The owner has to be able
+  // to disagree with a verdict out loud and see which rule produced it.
+  evidence         Json             @default("[]")
+
+  // --- Money ----------------------------------------------------------
+  totalOutstanding  Decimal @default(0) @db.Decimal(12, 2)
+  currentSessionDue Decimal @default(0) @db.Decimal(12, 2)
+  pastSessionsDue   Decimal @default(0) @db.Decimal(12, 2)
+  lifetimeBilled    Decimal @default(0) @db.Decimal(12, 2)
+  lifetimePaid      Decimal @default(0) @db.Decimal(12, 2)
+  avgTicket         Decimal @default(0) @db.Decimal(12, 2)
+
+  // --- Carry axis (works today; no payment dates required) ------------
+  sessionsTracked      Int   @default(0)
+  sessionsWithOpenDues Int   @default(0)
+  currentPaidRatio     Float @default(0)
+  rolloverStreak       Int   @default(0)
+  childrenCount        Int   @default(0)
+
+  // --- Timing axis (dark until the import + due dates land) -----------
+  timingProvenance      TimingProvenance @default(NONE)
+  lastPaymentAt         DateTime?
+  lastPaymentAmount     Decimal?         @db.Decimal(12, 2)
+  daysToFirstPayment    Int?
+  onTimeInstallmentRate Float?
+  avgDaysLate           Float?
+  // Day-of-session on which cumulative payment crossed 90% of what was billed.
+  clearanceDay          Int?
+  // { "1": 0.05, ... "12": 0.20 } — share of lifetime collection by calendar
+  // month. With one session of history this is a single sample and must be
+  // labelled as such wherever it is shown, never described as a pattern.
+  monthHistogram        Json             @default("{}")
+
+  // --- Scores ---------------------------------------------------------
+  reliabilityScore    Float   @default(0)
+  propensityScore     Float   @default(0)
+  expectedRecovery30d Decimal @default(0) @db.Decimal(12, 2)
+
+  // --- Contact history ------------------------------------------------
+  reachableContacts Int   @default(0)
+  contactAttempts   Int   @default(0)
+  contactPickRate   Float @default(0)
+  promisesMade      Int   @default(0)
+  promisesKept      Int   @default(0)
+
+  computedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId])
+  @@index([archetype])
+  @@index([propensityScore])
+}
+
+// Per-session workflow state for one household. Deliberately separate from
+// HouseholdProfile: this holds decisions a PERSON made — snoozed, parked,
+// pinned, stage — which a recompute must never trample. Only the four score
+// columns below are derived.
+//
+// It doubles as the worklist row, so ranking, filtering and pagination all
+// happen in SQL rather than in memory.
+model RecoveryCase {
+  id          Int @id @default(autoincrement())
+  householdId Int
+  sessionId   Int
+
+  // --- Derived (rewritten by every recompute) -------------------------
+  outstanding           Decimal   @default(0) @db.Decimal(12, 2)
+  // probability x expected collectable, capped at the balance. The worklist
+  // ranks on THIS, never on outstanding: sorting by raw balance ranks families
+  // by how badly they are doing rather than by what the day will collect.
+  expectedRecoveryValue Decimal   @default(0) @db.Decimal(12, 2)
+  priorityScore         Float     @default(0)
+  suppressedUntil       DateTime?
+  // Always populated when the case is suppressed. Skipped households are shown
+  // with their reason, never silently dropped.
+  suppressionReason     String?
+  // Which rule fired (SuppressionRule in src/lib/recovery/types.ts). Stored
+  // rather than parsed back out of the reason text, so the worklist can tell
+  // "waiting on something" apart from "somebody has to fix this" — a household
+  // with no phone number is work, not a skip.
+  suppressionRule       String?
+
+  // --- Human (a recompute must not touch these) -----------------------
+  stage         RecoveryStage @default(NEW)
+  snoozedUntil  DateTime?
+  parkedReason  String?
+  // Overrides every suppression rule for that date — the owner knows things
+  // the ledger does not.
+  pinnedForDate DateTime?
+  // Reserved for per-caller worklists. Unused while collections are owner-only;
+  // present from day one so a team needs no migration.
+  assignedToId  Int?
+
+  nextActionAt    DateTime?
+  lastContactAt   DateTime?
+  contactCount    Int       @default(0)
+  recoveredAmount Decimal   @default(0) @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  household Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  session   AcademicSession @relation(fields: [sessionId], references: [id])
+
+  @@unique([householdId, sessionId])
+  @@index([sessionId, expectedRecoveryValue])
+  @@index([sessionId, stage])
+  @@index([suppressedUntil])
+  @@index([pinnedForDate])
+  @@index([assignedToId])
+}
+
+// Every logged conversation. The actor is stored the same way TeachingAuditLog
+// stores it — id plus a denormalised name snapshot — so the log stays readable
+// after an account is removed.
+model ContactAttempt {
+  id          Int  @id @default(autoincrement())
+  householdId Int
+  sessionId   Int
+  // Which number was dialled, where that is known.
+  contactId   Int?
+
+  channel        ContactChannel @default(CALL)
+  outcome        ContactOutcome
+  talkedTo       String?
+  notes          String?
+  nextFollowUpAt DateTime?
+  contactedAt    DateTime       @default(now())
+
+  loggedById   Int?
+  loggedByName String?
+
+  createdAt DateTime @default(now())
+
+  household Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  session   AcademicSession @relation(fields: [sessionId], references: [id])
+  promises  PromiseToPay[]
+
+  @@index([householdId, contactedAt])
+  @@index([sessionId, contactedAt])
+  @@index([outcome])
+}
+
+// "₹5,000 by the 12th." Where a family names a figure themselves, that figure
+// is believed over the model — both in ranking and in the committed forecast
+// band.
+//
+// Resolution is automatic: payments by the household between the promise and
+// promisedFor + graceDays settle it. Nobody ticks a box, so the kept/broken
+// record stays honest and can be fed back into propensity.
+model PromiseToPay {
+  id              Int  @id @default(autoincrement())
+  householdId     Int
+  sourceContactId Int?
+
+  amount      Decimal       @db.Decimal(12, 2)
+  promisedFor DateTime
+  status      PromiseStatus @default(OPEN)
+
+  settledAmount Decimal?  @db.Decimal(12, 2)
+  settledAt     DateTime?
+  closeReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  household     Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  sourceContact ContactAttempt? @relation(fields: [sourceContactId], references: [id], onDelete: SetNull)
+
+  @@index([householdId, status])
+  @@index([status, promisedFor])
+}
+
+// A dated snapshot of one month's forecast. Snapshotting every generation is
+// what makes the forecast scoreable: an elapsed month is graded against the
+// EARLIEST snapshot for that month, because grading a forecast made on the
+// 30th against that month's takings would flatter the system into uselessness.
+model CollectionForecast {
+  id        Int @id @default(autoincrement())
+  sessionId Int
+
+  // First day of the month being forecast.
+  forecastMonth DateTime
+  // Date the forecast was produced.
+  generatedOn   DateTime
+
+  committed Decimal @db.Decimal(12, 2)
+  likely    Decimal @db.Decimal(12, 2)
+  stretch   Decimal @db.Decimal(12, 2)
+
+  // Filled in once the month has elapsed.
+  actualCollected   Decimal? @db.Decimal(12, 2)
+  // Clamped to 0.5-1.5x and fed into the next forecast: the system correcting
+  // its own optimism.
+  calibrationFactor Float?
+
+  // Decomposition — by source, by class, by household — so the number drills
+  // straight to the names behind it.
+  breakdown Json @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session AcademicSession @relation(fields: [sessionId], references: [id])
+
+  @@unique([sessionId, forecastMonth, generatedOn])
+  @@index([sessionId, forecastMonth])
+}
+
+// The tunable targeting rules — a single row, edited at /recovery/settings.
+//
+// These are settings, not constants: the person who knows whether five days is
+// too soon to call a family again is the one running the school.
+model RecoveryConfig {
+  id Int @id @default(1)
+
+  // Suppression thresholds
+  minOutstanding           Decimal @default(500) @db.Decimal(12, 2)
+  justPaidSuppressDays     Int     @default(7)
+  cooldownDays             Int     @default(5)
+  promiseGraceDays         Int     @default(3)
+  noAnswerBackoffThreshold Int     @default(3)
+  noAnswerBackoffDays      Int     @default(7)
+
+  // Worklist shape
+  dailyCallTarget Int @default(30)
+
+  // Per-factor weights for propensity scoring. Clamped to TUNING_LIMITS in
+  // src/lib/recovery/config.ts so a bad edit cannot produce a nonsense list.
+  scoreWeights Json @default("{}")
+
+  updatedAt     DateTime @updatedAt
+  updatedById   Int?
+  updatedByName String?
+}
+
+// One payment-history import run. Kept as a record rather than a one-shot
+// script because an import rewrites real transactions: the dry run has to be
+// reviewable before commit, and a bad commit has to be traceable afterwards.
+model PaymentImportBatch {
+  id       Int               @id @default(autoincrement())
+  filename String?
+  status   ImportBatchStatus @default(DRY_RUN)
+
+  totalRows     Int @default(0)
+  matchedRows   Int @default(0)
+  committedRows Int @default(0)
+  skippedRows   Int @default(0)
+
+  // Column mapping used, plus the per-student reconciliation report.
+  summary Json    @default("{}")
+  notes   String?
+
+  createdById   Int?
+  createdByName String?
+  createdAt     DateTime  @default(now())
+  committedAt   DateTime?
+  revertedAt    DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  rows PaymentImportRow[]
+
+  @@index([status])
+}
+
+// One row of an import file and what became of it. Unmatched, ambiguous and
+// invalid rows are kept, not discarded — they are the worklist for fixing the
+// source data.
+model PaymentImportRow {
+  id        Int @id @default(autoincrement())
+  batchId   Int
+  rowNumber Int
+
+  studentId     Int?
+  rawName       String?
+  rawClass      String?
+  rawFatherName String?
+
+  amount    Decimal?     @db.Decimal(12, 2)
+  paidAt    DateTime?
+  mode      PaymentMode?
+  reference String?
+
+  status        ImportRowStatus @default(UNMATCHED)
+  message       String?
+  // The FeeTransaction this row produced on commit, for reversal.
+  transactionId Int?
+
+  createdAt DateTime @default(now())
+
+  batch   PaymentImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  student Student?           @relation(fields: [studentId], references: [id])
+
+  @@index([batchId, status])
+  @@index([studentId])
 }

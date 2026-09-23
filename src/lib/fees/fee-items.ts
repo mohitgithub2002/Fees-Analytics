@@ -5,7 +5,7 @@ import {
   InstallmentPlanInput,
   statusFor,
 } from './installments'
-import { toPaise, toRupees } from './money'
+import { splitAmount, toPaise, toRupees } from './money'
 
 type FeeCategory = $Enums.FeeCategory
 
@@ -217,9 +217,35 @@ export async function deleteFeeItem(tx: Prisma.TransactionClient, feeItemId: num
 }
 
 /**
+ * Turn a fee-structure item's due-date schedule into an explicit installment
+ * plan, so a new enrollment's installments arrive already dated.
+ *
+ * Returns null when the item carries no schedule; the caller then falls back
+ * to an undated even split, exactly as before. An undated installment cannot
+ * be judged on time or late, so the recovery module's timing analysis falls
+ * back to session-relative timing for those items rather than guessing.
+ */
+export function planFromSchedule(
+  amount: number,
+  schedule: { sequence: number; label: string; dueDate: Date }[]
+): InstallmentPlanInput[] | null {
+  if (schedule.length === 0) return null
+  const ordered = [...schedule].sort((a, b) => a.sequence - b.sequence)
+  const amounts = splitAmount(amount, ordered.length)
+  return ordered.map((row, i) => ({
+    amount: amounts[i],
+    label: row.label,
+    dueDate: row.dueDate,
+  }))
+}
+
+/**
  * Copy the class-wise fee structure (for the enrollment's session + class)
  * onto an enrollment. Items whose name is already assigned are skipped, so
  * the call is idempotent and manual additions survive.
+ *
+ * Where a structure item defines a due-date schedule, the created
+ * installments pick those dates up automatically.
  */
 export async function applyStructureToEnrollment(
   tx: Prisma.TransactionClient,
@@ -238,7 +264,7 @@ export async function applyStructureToEnrollment(
         classId: enrollment.classroom.classId,
       },
     },
-    include: { items: true },
+    include: { items: { include: { schedule: { orderBy: { sequence: 'asc' } } } } },
   })
   if (!structure) {
     throw new FeeItemError('no fee structure defined for this class and session', 404)
@@ -248,13 +274,14 @@ export async function applyStructureToEnrollment(
   const created = []
   for (const item of structure.items) {
     if (existingNames.has(item.name)) continue
+    const amount = Number(item.amount)
     created.push(
       await createFeeItem(tx, {
         enrollmentId,
         category: item.category,
         name: item.name,
-        amount: Number(item.amount),
-        installments: item.installmentCount,
+        amount,
+        installments: planFromSchedule(amount, item.schedule) ?? item.installmentCount,
         structureItemId: item.id,
       })
     )
